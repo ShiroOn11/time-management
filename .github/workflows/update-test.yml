@@ -1,0 +1,47 @@
+name: Проверка автообновления
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'main.js'
+      - '.github/workflows/update-test.yml'
+
+jobs:
+  update:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Собрать «старую» версию 0.0.1 и установить в /Applications
+        run: |
+          npm version 0.0.1 --no-git-tag-version
+          npx electron-builder --mac dir --arm64 --publish never
+          ditto "dist/mac-arm64/Time Management.app" "/Applications/Time Management.app"
+          defaults read "/Applications/Time Management.app/Contents/Info" CFBundleShortVersionString
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Запустить и дождаться самообновления
+        run: |
+          TM_UPDATE_SELFTEST=1 "/Applications/Time Management.app/Contents/MacOS/Time Management" > app.log 2>&1 &
+          for i in $(seq 1 60); do
+            sleep 5
+            V=$(defaults read "/Applications/Time Management.app/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "-")
+            echo "через $((i*5)) c: версия $V"
+            if [ "$V" != "0.0.1" ] && [ "$V" != "-" ]; then
+              sleep 10
+              cat app.log
+              pgrep -fl "Time Management.app/Contents/MacOS" && echo "OK: обновилось до $V и перезапустилось" && exit 0
+              echo "обновилось, но не перезапустилось"; exit 1
+            fi
+          done
+          cat app.log
+          exit 1
