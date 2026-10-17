@@ -36,12 +36,36 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
+      - name: Проверить, что приложение запускается
+        run: |
+          APP=$(ls -d dist/mac-universal/*.app | head -1)
+          echo "App: $APP"
+          ls "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
+          codesign --verify --deep --strict --verbose=2 "$APP" || true
+          xattr -cr "$APP"
+          EXE=$(ls "$APP/Contents/MacOS" | head -1)
+          "$APP/Contents/MacOS/$EXE" > app.log 2>&1 &
+          PID=$!
+          sleep 25
+          if kill -0 $PID 2>/dev/null; then
+            echo "OK: приложение работает"
+            kill $PID
+          else
+            echo "FAIL: приложение завершилось"
+            cat app.log
+            ls ~/Library/Logs/DiagnosticReports/ || true
+            for f in ~/Library/Logs/DiagnosticReports/*; do echo "== $f"; head -c 6000 "$f"; done
+            exit 1
+          fi
+          tail -20 app.log
+
       - uses: actions/upload-artifact@v4
         with:
           name: time-management-mac
           path: dist/*.dmg
 
       - name: Опубликовать в Releases
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
