@@ -304,6 +304,17 @@ if (!gotLock) {
     createWindow();
     createTray();
     globalShortcut.register(QUICK_ADD_SHORTCUT, quickAdd);
+    // Самопроверка автообновления в CI: найти новую версию и сразу установить.
+    if (process.env.TM_UPDATE_SELFTEST) {
+      checkUpdate().then((u) => {
+        console.log('selftest check', JSON.stringify(u));
+        if (!u.available) return app.exit(2);
+        installUpdate(u.url).catch((e) => {
+          console.log('selftest error', e.message);
+          app.exit(1);
+        });
+      });
+    }
   });
   app.on('activate', showWindow);
   app.on('before-quit', () => {
