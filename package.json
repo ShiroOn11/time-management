@@ -1,0 +1,41 @@
+{
+  "name": "time-management",
+  "productName": "Тайм-менеджмент",
+  "version": "0.1.0",
+  "description": "Личный тайм-менеджмент для проект-менеджера: проекты, лягушка дня, загрузка, внезапные задачи",
+  "main": "main.js",
+  "private": true,
+  "author": "ShiroOn11",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --mac --universal --publish never"
+  },
+  "devDependencies": {
+    "electron": "38.8.4",
+    "electron-builder": "26.8.1"
+  },
+  "build": {
+    "appId": "com.shiroon11.timemanagement",
+    "productName": "Тайм-менеджмент",
+    "artifactName": "Time-Management-${version}-mac.${ext}",
+    "files": ["main.js", "preload.js", "renderer/**", "assets/**"],
+    "directories": { "buildResources": "build", "output": "dist" },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "target": [{ "target": "dmg", "arch": ["universal"] }]
+    },
+    "dmg": {
+      "title": "Тайм-менеджмент",
+      "contents": [
+        { "x": 140, "y": 200 },
+        { "x": 400, "y": 200, "type": "link", "path": "/Applications" }
+      ]
+    }
+  }
+}
