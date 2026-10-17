@@ -19,6 +19,10 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [current, ascii, ascii-arm64]
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +35,14 @@ jobs:
 
       - run: npm test
 
+      - name: Вариант сборки
+        run: |
+          case "${{ matrix.variant }}" in
+            ascii) node -e "const f='package.json',p=require('./'+f);p.productName=p.build.productName='Time Management';require('fs').writeFileSync(f,JSON.stringify(p,null,2))" ;;
+            ascii-arm64) node -e "const f='package.json',p=require('./'+f);p.productName=p.build.productName='Time Management';p.build.mac.target=[{target:'dmg',arch:['arm64']}];p.scripts.dist='electron-builder --mac --publish never';require('fs').writeFileSync(f,JSON.stringify(p,null,2))" ;;
+          esac
+          grep -n productName package.json
+
       - name: Собрать .dmg
         run: npm run dist
         env:
@@ -38,34 +50,48 @@ jobs:
 
       - name: Проверить, что приложение запускается
         run: |
-          APP=$(ls -d dist/mac-universal/*.app | head -1)
+          set +e
+          APP=$(ls -d dist/mac*/*.app | head -1)
           echo "App: $APP"
-          ls "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
-          codesign --verify --deep --strict --verbose=2 "$APP" || true
           xattr -cr "$APP"
           EXE=$(ls "$APP/Contents/MacOS" | head -1)
-          "$APP/Contents/MacOS/$EXE" > app.log 2>&1 &
+          ELECTRON_ENABLE_LOGGING=1 "$APP/Contents/MacOS/$EXE" > app.log 2>&1 &
           PID=$!
-          sleep 25
+          sleep 30
           if kill -0 $PID 2>/dev/null; then
             echo "OK: приложение работает"
             kill $PID
-          else
-            echo "FAIL: приложение завершилось"
-            cat app.log
-            ls ~/Library/Logs/DiagnosticReports/ || true
-            for f in ~/Library/Logs/DiagnosticReports/*; do echo "== $f"; head -c 6000 "$f"; done
-            exit 1
+            tail -30 app.log
+            exit 0
           fi
-          tail -20 app.log
+          echo "FAIL: приложение завершилось"
+          cat app.log
+          for f in ~/Library/Logs/DiagnosticReports/*.ips; do
+            echo "== $f"
+            python3 - "$f" <<'PY'
+          import json, sys
+          raw = open(sys.argv[1]).read().split('\n', 1)
+          d = json.loads(raw[1])
+          print('exception:', d.get('exception'))
+          print('termination:', d.get('termination'))
+          print('asi:', d.get('asi'))
+          imgs = d.get('usedImages', [])
+          t = [x for x in d.get('threads', []) if x.get('triggered')]
+          for fr in (t[0]['frames'][:25] if t else []):
+              img = imgs[fr['imageIndex']] if fr.get('imageIndex') is not None else {}
+              print(' ', img.get('name'), hex(fr.get('imageOffset', 0)), fr.get('symbol', ''))
+          PY
+          done
+          exit 1
 
       - uses: actions/upload-artifact@v4
+        if: matrix.variant == 'current'
         with:
           name: time-management-mac
           path: dist/*.dmg
 
       - name: Опубликовать в Releases
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && matrix.variant == 'current'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
