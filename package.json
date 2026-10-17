@@ -1,7 +1,7 @@
 {
   "name": "time-management",
-  "productName": "Тайм-менеджмент",
-  "version": "0.1.0",
+  "productName": "Time Management",
+  "version": "0.1.1",
   "description": "Личный тайм-менеджмент для проект-менеджера: проекты, лягушка дня, загрузка, внезапные задачи",
   "main": "main.js",
   "private": true,
@@ -18,23 +18,46 @@
   },
   "build": {
     "appId": "com.shiroon11.timemanagement",
-    "productName": "Тайм-менеджмент",
+    "productName": "Time Management",
     "artifactName": "Time-Management-${version}-mac.${ext}",
-    "files": ["main.js", "preload.js", "renderer/**", "assets/**"],
-    "directories": { "buildResources": "build", "output": "dist" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "assets/**"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
       "identity": "-",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "target": [{ "target": "dmg", "arch": ["universal"] }]
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ]
     },
     "dmg": {
-      "title": "Тайм-менеджмент",
+      "title": "Time Management",
       "contents": [
-        { "x": 140, "y": 200 },
-        { "x": 400, "y": 200, "type": "link", "path": "/Applications" }
+        {
+          "x": 140,
+          "y": 200
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     }
   }

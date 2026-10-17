@@ -36,12 +36,49 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
+      - name: Проверить, что приложение запускается
+        run: |
+          set +e
+          APP=$(ls -d dist/mac*/*.app | head -1)
+          echo "App: $APP"
+          xattr -cr "$APP"
+          EXE=$(ls "$APP/Contents/MacOS" | head -1)
+          ELECTRON_ENABLE_LOGGING=1 "$APP/Contents/MacOS/$EXE" > app.log 2>&1 &
+          PID=$!
+          sleep 30
+          if kill -0 $PID 2>/dev/null; then
+            echo "OK: приложение работает"
+            kill $PID
+            tail -30 app.log
+            exit 0
+          fi
+          echo "FAIL: приложение завершилось"
+          cat app.log
+          for f in ~/Library/Logs/DiagnosticReports/*.ips; do
+            echo "== $f"
+            python3 - "$f" <<'PY'
+          import json, sys
+          raw = open(sys.argv[1]).read().split('\n', 1)
+          d = json.loads(raw[1])
+          print('exception:', d.get('exception'))
+          print('termination:', d.get('termination'))
+          print('asi:', d.get('asi'))
+          imgs = d.get('usedImages', [])
+          t = [x for x in d.get('threads', []) if x.get('triggered')]
+          for fr in (t[0]['frames'][:25] if t else []):
+              img = imgs[fr['imageIndex']] if fr.get('imageIndex') is not None else {}
+              print(' ', img.get('name'), hex(fr.get('imageOffset', 0)), fr.get('symbol', ''))
+          PY
+          done
+          exit 1
+
       - uses: actions/upload-artifact@v4
         with:
           name: time-management-mac
           path: dist/*.dmg
 
       - name: Опубликовать в Releases
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
@@ -50,5 +87,5 @@ jobs:
           make_latest: 'true'
           files: dist/*.dmg
           body: |
-            Скачайте файл `.dmg` ниже, откройте его и перетащите «Тайм-менеджмент» в «Программы».
+            Скачайте файл `.dmg` ниже, откройте его и перетащите Time Management в «Программы».
             Первый запуск: см. раздел «Установка» в README.
