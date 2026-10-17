@@ -1,10 +1,13 @@
 // Главный процесс: окно, хранение данных на диске, строка меню, горячая клавиша.
-const { app, BrowserWindow, ipcMain, dialog, globalShortcut, Tray, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut, Tray, Menu, nativeImage, shell, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { execFile, spawn } = require('child_process');
 
 const QUICK_ADD_SHORTCUT = 'Alt+CommandOrControl+N';
 const BACKUPS_KEPT = 30;
+const REPO = 'ShiroOn11/time-management';
 
 // Папка данных с латинским именем: ~/Library/Application Support/TimeManagement
 app.setPath('userData', path.join(app.getPath('appData'), 'TimeManagement'));
@@ -81,7 +84,9 @@ function createWindow() {
     title: 'Тайм-менеджмент',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 18, y: 18 },
-    backgroundColor: '#f6f5f2',
+    vibrancy: 'sidebar',
+    visualEffectState: 'followWindow',
+    backgroundColor: '#00000000',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -138,6 +143,7 @@ function createMenu() {
         { label: 'Экспорт данных…', click: () => send('menu', 'export') },
         { label: 'Импорт данных…', click: () => send('menu', 'import') },
         { label: 'Открыть папку с данными', click: () => shell.openPath(dataDir()) },
+        { label: 'Проверить обновления…', click: () => send('menu', 'update') },
         { type: 'separator' },
         { role: 'close', label: 'Скрыть окно' },
       ],
@@ -151,6 +157,7 @@ function createMenu() {
         { label: 'Проекты', accelerator: 'CommandOrControl+3', click: () => send('menu', 'view:projects') },
         { label: 'Неделя', accelerator: 'CommandOrControl+4', click: () => send('menu', 'view:week') },
         { label: 'Итоги', accelerator: 'CommandOrControl+5', click: () => send('menu', 'view:review') },
+        { label: 'Как пользоваться', accelerator: 'CommandOrControl+/', click: () => send('menu', 'view:guide') },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
@@ -188,6 +195,99 @@ ipcMain.handle('data:import', async () => {
   if (canceled || !filePaths.length) return null;
   return readJSON(filePaths[0]);
 });
+// ---------- автообновление ----------
+// Новая версия берётся из GitHub Releases: скачиваем .dmg, подменяем приложение и перезапускаем.
+// Данные лежат отдельно (Application Support), поэтому при обновлении не теряются.
+
+function newer(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return false;
+}
+
+async function checkUpdate() {
+  const current = app.getVersion();
+  try {
+    const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'time-management-app' },
+    });
+    if (res.status === 404) return { ok: false, current, reason: 'private' };
+    if (!res.ok) return { ok: false, current, reason: 'http ' + res.status };
+    const rel = await res.json();
+    const asset = (rel.assets || []).find((a) => a.name.endsWith('.dmg'));
+    const m = asset && asset.name.match(/(\d+\.\d+\.\d+)/);
+    if (!m) return { ok: false, current, reason: 'noasset' };
+    return { ok: true, current, latest: m[1], available: newer(m[1], current), url: asset.browser_download_url, size: asset.size };
+  } catch (e) {
+    return { ok: false, current, reason: 'offline' };
+  }
+}
+
+function run(cmd, args) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
+}
+
+async function installUpdate(url) {
+  const bundle = path.resolve(app.getPath('exe'), '..', '..', '..');
+  if (!bundle.endsWith('.app') || bundle.startsWith('/Volumes/')) {
+    throw new Error('Приложение запущено не из «Программ». Перетащите его в «Программы» и откройте оттуда.');
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-update-'));
+  const dmg = path.join(dir, 'update.dmg');
+  const res = await net.fetch(url, { headers: { 'User-Agent': 'time-management-app' } });
+  if (!res.ok) throw new Error('Не удалось скачать обновление (' + res.status + ')');
+  const total = Number(res.headers.get('content-length')) || 0;
+  const out = fs.createWriteStream(dmg);
+  const reader = res.body.getReader();
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out.write(Buffer.from(value));
+    got += value.length;
+    if (total) send('update:progress', Math.round((got / total) * 100));
+  }
+  await new Promise((r) => out.end(r));
+  const mnt = path.join(dir, 'mnt');
+  await run('hdiutil', ['attach', '-nobrowse', '-noverify', '-noautoopen', '-mountpoint', mnt, dmg]);
+  const src = fs.readdirSync(mnt).find((f) => f.endsWith('.app'));
+  if (!src) throw new Error('В обновлении нет приложения');
+  // Скрипт ждёт выхода приложения, заменяет его новой версией и запускает снова.
+  const script = path.join(dir, 'install.sh');
+  fs.writeFileSync(script, [
+    '#!/bin/bash',
+    `while kill -0 ${process.pid} 2>/dev/null; do sleep 0.3; done`,
+    `rm -rf "${bundle}.new"`,
+    `if ditto "${path.join(mnt, src)}" "${bundle}.new"; then`,
+    `  rm -rf "${bundle}" && mv "${bundle}.new" "${bundle}"`,
+    'fi',
+    `xattr -cr "${bundle}"`,
+    `hdiutil detach "${mnt}" -quiet`,
+    `open "${bundle}"`,
+    `rm -rf "${dir}"`,
+  ].join('\n'));
+  fs.chmodSync(script, 0o755);
+  spawn('/bin/bash', [script], { detached: true, stdio: 'ignore' }).unref();
+  quitting = true;
+  app.quit();
+}
+
+ipcMain.handle('update:check', () => checkUpdate());
+ipcMain.handle('update:install', async (_e, url) => {
+  try {
+    await installUpdate(url);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle('app:version', () => app.getVersion());
+
 ipcMain.on('tray:update', (_e, title, timerRunning) => {
   if (!tray) return;
   tray.setTitle(title || '');

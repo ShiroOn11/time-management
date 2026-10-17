@@ -12,6 +12,9 @@ const bridge = window.api || {
   },
   exportData: async () => false,
   importData: async () => null,
+  checkUpdate: async () => ({ ok: false, reason: 'browser' }),
+  installUpdate: async () => ({ ok: false }),
+  version: async () => 'dev',
   updateTray: () => {},
   on: () => {},
 };
@@ -55,6 +58,7 @@ const ui = {
   reviewOffset: 0,
 };
 let lastNotified = {};
+const upd = { info: null, progress: null, error: '', version: '' };
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const today = () => L.todayISO();
@@ -298,6 +302,7 @@ const VIEWS = [
   ['projects', '◧', 'Проекты'],
   ['week', '▦', 'Неделя'],
   ['review', '◎', 'Итоги недели'],
+  ['guide', '?', 'Как пользоваться'],
   ['settings', '⚙︎', 'Настройки'],
 ];
 
@@ -306,7 +311,7 @@ function render() {
   renderTimerBar();
   const v = document.getElementById('view');
   const scroll = v.scrollTop;
-  const fn = { today: viewToday, tasks: viewTasks, projects: viewProjects, week: viewWeek, review: viewReview, settings: viewSettings }[ui.view];
+  const fn = { today: viewToday, tasks: viewTasks, projects: viewProjects, week: viewWeek, review: viewReview, guide: viewGuide, settings: viewSettings }[ui.view];
   v.innerHTML = fn();
   v.scrollTop = scroll;
 }
@@ -325,7 +330,7 @@ function renderNav() {
 
   const tracked = S.tasks.reduce((sum, x) => sum + minutesOnDay(x, t), 0);
   const un = L.unplannedOn(t, S.tasks);
-  document.getElementById('sidebarFoot').innerHTML =
+  document.getElementById('sidebarFoot').innerHTML = updateBadge() +
     `Сегодня в работе: <b>${L.fmtMin(tracked)}</b><br>Внезапных: <b>${un.count}</b>${un.minutes ? ' · ' + L.fmtMin(un.minutes) : ''}`;
 }
 
@@ -509,7 +514,7 @@ function viewToday() {
   });
 
   return `
-    <div class="view-head"><div><h1>${WD[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}</h1>
+    <div class="view-head"><div><div class="greet">${greeting()}</div><h1>${WD[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}</h1>
       <div class="sub">${isWork ? 'Рабочий день' : 'Выходной'} · ${planned.filter((x) => x.status === 'done').length + (frog && frog.status === 'done' ? 1 : 0)} из ${planned.length + (frog ? 1 : 0)} в плане сделано</div></div>
       <div class="spacer"></div>
       <button class="btn" data-act="newTask" data-planned="${t}">＋ Задача на сегодня</button>
@@ -889,11 +894,128 @@ function viewSettings() {
           <textarea class="input" rows="${(tpl[s.id] || []).length + 1}" data-change="template" data-k="${s.id}">${esc((tpl[s.id] || []).map((r) => r.join(' | ')).join('\n'))}</textarea></div>`).join('')}
         <div class="hint">Типы: ${Object.entries(L.TYPES).map(([k, v]) => k + ' — ' + v).join(', ')}. <a href="#" data-act="resetTemplates">Вернуть стандартные</a></div>
       </div>
+      <div class="card"><h2>Обновления</h2>
+        <div style="display:flex;gap:12px;align-items:center">
+          <div style="flex:1">Версия <b>${esc(upd.version || '—')}</b>. ${updateStatusText()}</div>
+          <button class="btn" data-act="checkUpdate">Проверить</button>
+          ${upd.info && upd.info.available ? '<button class="btn primary" data-act="installUpdate">Обновить</button>' : ''}
+        </div>
+        <div class="hint" style="margin-top:8px">Приложение проверяет обновления при запуске и раз в 6 часов. Задачи и настройки при обновлении сохраняются.</div>
+      </div>
       <div class="card"><h2>Прочее</h2>
         <label style="display:flex;gap:8px;margin-bottom:12px"><input type="checkbox" data-change="notifications" ${st.notifications ? 'checked' : ''}> Уведомления: утренний план, напоминания «жду ответа», долгий таймер, конец дня</label>
         <div style="display:flex;gap:8px"><button class="btn" data-act="export">Экспорт в файл…</button><button class="btn" data-act="import">Импорт из файла…</button></div>
       </div>
     </div>`;
+}
+
+// ---------- Как пользоваться ----------
+
+function viewGuide() {
+  const step = (n, title, body) => `<div class="g-step"><div class="g-n">${n}</div><div><div class="g-t">${title}</div><div class="g-b">${body}</div></div></div>`;
+  return `
+    <div class="view-head"><div><h1>Как пользоваться</h1>
+      <div class="sub">Вся механика — 10 минут в день и 15 минут в пятницу. Остальное время приложение просто напоминает и считает.</div></div>
+      <div class="spacer"></div><button class="btn primary" data-act="go" data-v="today">Начать</button></div>
+
+    <div class="card g-flow">
+      <div class="g-box"><b>Входящие</b><span>всё, что прилетело на бегу</span></div><div class="g-arrow">→</div>
+      <div class="g-box"><b>Неделя / день</b><span>разложить по дням</span></div><div class="g-arrow">→</div>
+      <div class="g-box"><b>Сегодня</b><span>лягушка + до 3 задач</span></div><div class="g-arrow">→</div>
+      <div class="g-box"><b>▶ Таймер</b><span>работаете — время считается</span></div><div class="g-arrow">→</div>
+      <div class="g-box"><b>✓ Готово</b><span>оценка сравнивается с фактом</span></div><div class="g-arrow">→</div>
+      <div class="g-box"><b>Итоги</b><span>пятница, 15 минут</span></div>
+    </div>
+
+    <div class="grid-today">
+      <div class="col">
+        <div class="card"><h2>Каждый день</h2>
+          ${step('1', 'Утро — 5 минут на «Сегодня»', 'Разберите <b>Входящие</b> (у каждой задачи — проект, оценка в минутах и день). Выберите <b>🐸 лягушку</b> — самое важное и неприятное, делаете первым. Добавьте ещё <b>2–3 задачи</b> из списка «Взять в план». Посмотрите на полосу <b>«Загрузка дня»</b>: если красная — перенесите лишнее стрелкой →.')}
+          ${step('2', 'Днём — записывать всё, что прилетает', 'Клиент написал, дизайнер спросил, маркетолог попросил — нажмите <b>⌥⌘N</b> (работает из любой программы), впишите одной строкой и отметьте <b>от кого</b>. Сделали сразу — «Уже сделал» и сколько минут. Не срочно — «Во входящие», разберёте завтра утром.')}
+          ${step('3', 'Работаете над задачей — жмите ▶', 'Таймер виден в строке меню вверху экрана. Закончили — <b>✓</b>. Через 3–5 задач приложение узнает, во сколько раз вы недооцениваете время, и начнёт показывать «реально ~…». Отдельно считается проверка текстов с Claude.')}
+          ${step('4', 'Вечер — закрыть день', 'Около конца рабочего дня появится кнопка <b>«Перенести на завтра»</b>: незавершённое уходит на следующий рабочий день, а не остаётся в голове.')}
+        </div>
+        <div class="card"><h2>Проекты</h2>
+          ${step('→', 'Новый проект', 'Название, клиент и <b>дата сдачи в печать</b>. План этапов посчитается назад от этой даты: анализ 5 дней, дизайн 9, презентация 3, печать 3 (меняется в Настройках). Задачи этапа создадутся сами.')}
+          ${step('→', 'Этап закончился', 'Кнопка <b>«→ следующий этап»</b> на карточке. Задачи нового этапа появятся со сроками.')}
+          ${step('→', 'Ждёте клиента', '<b>«Жду клиента»</b> + дата напоминания. В нужный день приложение напомнит, а на карточке видно, сколько дней проект стоит не по вашей вине.')}
+          ${step('→', 'Клиент прислал правки', '<b>«＋ Круг правок»</b>. Каждый круг после первого сдвигает прогноз на 2 дня — сразу видно, успеваете ли.')}
+        </div>
+      </div>
+      <div class="col side">
+        <div class="card"><h2>Что значат цифры</h2>
+          <dl class="kv" style="grid-template-columns:auto 1fr;margin:0">
+            <dt>Загрузка дня</dt><dd>Сколько минут уже запланировано на сегодня из доступных. 40% рабочего дня специально не планируется — это буфер на внезапное.</dd>
+            <dt>реально ~</dt><dd>Ваша оценка × личный коэффициент. Если пишете «30 мин», а уходит 45 — будет «реально ~45».</dd>
+            <dt>запас N р.д.</dt><dd>Сколько рабочих дней остаётся до сдачи в печать при текущем темпе. Красное «опоздание» — пора что-то менять сейчас, а не в последний день.</dd>
+            <dt>Хвосты</dt><dd>Задачи из плана прошлых дней, которые не сделаны. Перенесите на сегодня или снимите с плана.</dd>
+          </dl>
+        </div>
+        <div class="card"><h2>Пятница · 15 минут</h2>
+          <div class="g-b">Откройте <b>«Итоги недели»</b> и пройдите чек-лист: входящие пусты, проекты проверены, кому напомнить, загрузка следующей недели, 3 главных результата. Там же видно, кто сколько времени съел внезапными просьбами.</div>
+        </div>
+        <div class="card"><h2>Личное</h2>
+          <div class="g-b">В быстрой задаче переключите <b>Работа / Личное</b>. У личного свой запас часов (в будни 2 ч, в выходные 4 ч) и свои категории: здоровье, семья, учёба, быт, финансы, отдых.</div>
+        </div>
+        <div class="card"><h2>Горячие клавиши</h2>
+          <dl class="kv" style="margin:0">
+            <dt>⌥⌘N</dt><dd>быстрая задача откуда угодно</dd>
+            <dt>⌘1 … ⌘5</dt><dd>Сегодня · Задачи · Проекты · Неделя · Итоги</dd>
+            <dt>⌘/</dt><dd>эта страница</dd>
+            <dt>⏎ / ⌘⏎</dt><dd>в быстрой задаче: во входящие / на сегодня</dd>
+          </dl>
+        </div>
+      </div>
+    </div>`;
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 5) return 'Доброй ночи';
+  if (h < 12) return 'Доброе утро';
+  if (h < 18) return 'Добрый день';
+  return 'Добрый вечер';
+}
+
+// ---------- обновления ----------
+
+function updateStatusText() {
+  if (upd.progress != null) return 'Скачиваю обновление… ' + upd.progress + '%';
+  if (upd.error) return '<span style="color:var(--danger)">' + esc(upd.error) + '</span>';
+  const i = upd.info;
+  if (!i) return 'Проверяю…';
+  if (i.ok && i.available) return 'Доступна новая версия <b>' + esc(i.latest) + '</b>.';
+  if (i.ok) return 'Установлена последняя версия.';
+  if (i.reason === 'private') return 'Автообновление недоступно: репозиторий на GitHub закрыт. Сделайте его публичным (Settings → Change visibility).';
+  if (i.reason === 'offline') return 'Нет интернета — проверю позже.';
+  if (i.reason === 'browser') return '';
+  return 'Не удалось проверить обновления.';
+}
+function updateBadge() {
+  if (upd.progress != null) return `<div class="upd">Обновление… ${upd.progress}%</div>`;
+  if (upd.info && upd.info.available) return `<button class="upd" data-act="installUpdate">⬆︎ Обновить до ${esc(upd.info.latest)}</button>`;
+  return '';
+}
+async function checkUpdate(manual) {
+  upd.error = '';
+  upd.info = await bridge.checkUpdate();
+  if (manual && upd.info.ok && !upd.info.available) toast('Установлена последняя версия');
+  render();
+}
+async function installUpdate() {
+  if (!upd.info || !upd.info.available) return;
+  stopTimer(true);
+  clearTimeout(saveTimer);
+  await bridge.save(S);
+  upd.progress = 0;
+  upd.error = '';
+  render();
+  const r = await bridge.installUpdate(upd.info.url);
+  if (!r.ok) {
+    upd.progress = null;
+    upd.error = r.error || 'Не удалось обновить';
+    render();
+  }
 }
 
 // ============================================================
@@ -1348,6 +1470,8 @@ const ACTIONS = {
   },
   qaSave: (el) => qaSave(el.dataset.mode),
   export: () => bridge.exportData(S).then((ok) => ok && toast('Сохранено')),
+  checkUpdate: () => checkUpdate(true),
+  installUpdate: () => confirmBox('Скачать и установить новую версию? Приложение перезапустится, задачи сохранятся.', installUpdate),
   import: doImport,
 };
 
@@ -1559,13 +1683,28 @@ async function init() {
     if (cmd.startsWith('view:')) {
       ui.view = cmd.slice(5);
       render();
+    } else if (cmd === 'update') {
+      ui.view = 'settings';
+      checkUpdate(true);
     } else if (cmd === 'export') ACTIONS.export();
     else if (cmd === 'import') doImport();
   });
   if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
     try { Notification.requestPermission(); } catch (e) { /* ignore */ }
   }
+  bridge.on('update:progress', (p) => {
+    upd.progress = p;
+    renderNav();
+  });
+  upd.version = await bridge.version();
+  if (!S.seenGuide) {
+    S.seenGuide = true;
+    ui.view = 'guide';
+    save();
+  }
   render();
+  setTimeout(() => checkUpdate(false), 4000);
+  setInterval(() => checkUpdate(false), 6 * 3600000);
   setInterval(tick, 1000);
   setInterval(minuteCheck, 30000);
   tick();
