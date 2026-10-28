@@ -302,6 +302,36 @@
     return score;
   }
 
+  // ---------- доска «Печать» ----------
+  // Карточки колонки: сначала открытые (по ручному порядку или по сроку), потом выполненные.
+  function boardColumn(cards, colId, sort) {
+    const open = cards.filter((c) => c.col === colId && !c.done);
+    const done = cards.filter((c) => c.col === colId && c.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+    open.sort((a, b) => {
+      if (sort === 'due') {
+        const da = a.due || '9999';
+        const db = b.due || '9999';
+        if (da !== db) return da < db ? -1 : 1;
+      }
+      return (a.order || 0) - (b.order || 0);
+    });
+    return open.concat(done);
+  }
+
+  // Переместить карточку в колонку colId перед карточкой beforeId (или в конец открытых).
+  function moveCard(cards, id, colId, beforeId) {
+    const card = cards.find((c) => c.id === id);
+    if (!card) return;
+    const list = boardColumn(cards, colId, 'manual').filter((c) => !c.done && c.id !== id);
+    let idx = beforeId ? list.findIndex((c) => c.id === beforeId) : -1;
+    if (idx < 0) idx = list.length;
+    card.col = colId;
+    list.splice(idx, 0, card);
+    list.forEach((c, i) => {
+      c.order = i;
+    });
+  }
+
   function fmtMin(m) {
     m = Math.round(m || 0);
     const sign = m < 0 ? '−' : '';
@@ -326,7 +356,7 @@
     toISO, parseISO, todayISO, addDays, isWorkday, addWorkdays, snapWorkday, workdaysBetween, weekStart,
     stageDays, planBackward, stageIndex, forecast,
     sessionMinutes, actualMinutes, calibration, realisticMinutes,
-    dayCapacity, dayLoad, unplannedOn, frogScore, fmtMin, plural,
+    dayCapacity, dayLoad, unplannedOn, frogScore, fmtMin, plural, boardColumn, moveCard,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Logic = api;
