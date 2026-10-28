@@ -1,0 +1,13 @@
+name: Проверка раннеров
+on:
+  push:
+    paths: ['.github/workflows/runner-check.yml']
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "linux ok"
+  mac15:
+    runs-on: macos-15
+    steps:
+      - run: sw_vers
