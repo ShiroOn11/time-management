@@ -76,3 +76,24 @@ test('время сессий таймера', () => {
   assert.strictEqual(L.fmtMin(50), '50 мин');
   assert.strictEqual(L.fmtMin(125), '2 ч 5 мин');
 });
+
+test('доска печати: ручной порядок, сортировка по сроку и перенос', () => {
+  const cards = [
+    { id: 'a', col: 'aziz', order: 0, due: '2026-11-05' },
+    { id: 'b', col: 'aziz', order: 1, due: '2026-11-01' },
+    { id: 'c', col: 'aziz', order: 2 },
+    { id: 'd', col: 'aziz', order: 3, done: true, doneAt: 5 },
+    { id: 'e', col: 'anvar', order: 0 },
+  ];
+  const ids = (col, sort) => L.boardColumn(cards, col, sort).map((c) => c.id).join('');
+  assert.strictEqual(ids('aziz', 'manual'), 'abcd');
+  assert.strictEqual(ids('aziz', 'due'), 'bacd');
+  L.moveCard(cards, 'c', 'aziz', 'a'); // наверх
+  assert.strictEqual(ids('aziz', 'manual'), 'cabd');
+  L.moveCard(cards, 'e', 'aziz', 'b'); // из другой колонки между a и b
+  assert.strictEqual(ids('aziz', 'manual'), 'caebd');
+  assert.strictEqual(ids('anvar', 'manual'), '');
+  L.moveCard(cards, 'a', 'anvar', null); // в конец пустой колонки
+  assert.strictEqual(ids('anvar', 'manual'), 'a');
+  assert.strictEqual(ids('aziz', 'manual'), 'cebd');
+});

@@ -389,3 +389,48 @@ textarea.input { resize: vertical; min-height: 64px; }
 .g-t { font-weight: 650; margin-bottom: 2px; }
 .g-b { color: var(--text); opacity: .85; font-size: 13px; }
 .side .kv dd { margin-bottom: 6px; }
+
+/* доска «Печать» */
+.board { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; align-items: start; }
+.pcol {
+  background: var(--glass); border: 1px solid var(--glass-line); border-radius: var(--radius); box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 220px;
+}
+.pcol.drop { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.pcol-head { display: flex; align-items: center; gap: 8px; padding: 2px 2px 4px; }
+.pcol-name { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+.pcol-head .icon-btn { margin-left: auto; }
+.count-pill { font-size: 11px; font-weight: 700; background: var(--soft); color: var(--muted); border-radius: 10px; padding: 0 7px; }
+.padd { display: flex; gap: 6px; }
+.padd .input { padding: 6px 9px; font-size: 13px; }
+.padd input[name="due"] { width: 128px; flex-shrink: 0; color: var(--muted); }
+.pcards { display: flex; flex-direction: column; gap: 6px; min-height: 40px; }
+.pcard {
+  display: flex; gap: 9px; align-items: flex-start; background: var(--panel); border-radius: 10px; padding: 9px 10px;
+  border: 1px solid var(--line); cursor: grab; transition: transform .08s, box-shadow .08s; position: relative;
+}
+.pcard:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, .08); }
+.pcard:active { cursor: grabbing; }
+.pcard.dragging { opacity: .35; }
+.pcard.late { border-color: var(--danger); box-shadow: inset 3px 0 0 var(--danger); }
+.pcard.done { opacity: .55; cursor: default; }
+.pcard.done .ptitle { text-decoration: line-through; }
+.pcard.ins-before::before {
+  content: ""; position: absolute; left: 4px; right: 4px; top: -5px; height: 3px; border-radius: 3px; background: var(--accent);
+}
+.pcard .check {
+  width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--muted); flex-shrink: 0; margin-top: 1px;
+  cursor: pointer; display: grid; place-items: center; background: transparent; padding: 0; font-size: 11px;
+}
+.pcard.done .check { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pbody { flex: 1; min-width: 0; cursor: pointer; }
+.ptitle { line-height: 1.35; word-wrap: break-word; }
+.pcard .meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.pcard .meta:empty { display: none; }
+.pnote { color: var(--muted); font-size: 12px; margin-top: 4px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pempty { text-align: center; padding: 18px 8px; font-size: 12.5px; }
+.tag.soon { background: var(--accent-soft); color: var(--accent); }
+.tag.person { background: var(--personal-soft); color: var(--personal); }
+.milestone.print { background: var(--personal-soft); color: var(--personal); }
+.milestone.print[draggable] { cursor: grab; }

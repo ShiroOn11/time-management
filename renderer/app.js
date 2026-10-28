@@ -73,7 +73,17 @@ function fresh() {
     timer: null,
     days: {},
     reviews: {},
+    board: freshBoard(),
     createdAt: nowMs(),
+  };
+}
+
+function freshBoard() {
+  return {
+    columns: [{ id: uid(), name: 'Азиз ака' }, { id: uid(), name: 'Анвар ака' }, { id: uid(), name: 'Я' }],
+    cards: [],
+    sort: 'manual',
+    showDone: false,
   };
 }
 
@@ -93,6 +103,9 @@ const projectById = (id) => S.projects.find((p) => p.id === id);
 const projectsMap = () => Object.fromEntries(S.projects.map((p) => [p.id, p]));
 const dayRec = (iso) => (S.days[iso] = S.days[iso] || {});
 const templates = () => settings().templates || L.TEMPLATES;
+const cardById = (id) => S.board.cards.find((c) => c.id === id);
+const columnById = (id) => S.board.columns.find((c) => c.id === id);
+const overdueCards = () => S.board.cards.filter((c) => !c.done && c.due && c.due < today());
 
 // ============================================================
 // Утилиты
@@ -301,6 +314,7 @@ const VIEWS = [
   ['tasks', '☰', 'Задачи'],
   ['projects', '◧', 'Проекты'],
   ['week', '▦', 'Неделя'],
+  ['print', '⎙', 'Печать'],
   ['review', '◎', 'Итоги недели'],
   ['guide', '?', 'Как пользоваться'],
   ['settings', '⚙︎', 'Настройки'],
@@ -311,7 +325,7 @@ function render() {
   renderTimerBar();
   const v = document.getElementById('view');
   const scroll = v.scrollTop;
-  const fn = { today: viewToday, tasks: viewTasks, projects: viewProjects, week: viewWeek, review: viewReview, guide: viewGuide, settings: viewSettings }[ui.view];
+  const fn = { today: viewToday, tasks: viewTasks, projects: viewProjects, week: viewWeek, print: viewPrint, review: viewReview, guide: viewGuide, settings: viewSettings }[ui.view];
   v.innerHTML = fn();
   v.scrollTop = scroll;
 }
@@ -321,7 +335,14 @@ function renderNav() {
   const t = today();
   const tails = S.tasks.filter((x) => x.status !== 'done' && x.status !== 'inbox' && x.plannedFor && x.plannedFor < t).length;
   const late = S.projects.filter((p) => !p.closed && L.forecast(p, settings()).status === 'late').length;
-  const counts = { today: tails ? [tails, true] : null, tasks: inbox ? [inbox, inbox > 5] : null, projects: late ? [late, true] : null };
+  const printLate = overdueCards().length;
+  const printOpen = S.board.cards.filter((c) => !c.done).length;
+  const counts = {
+    today: tails ? [tails, true] : null,
+    tasks: inbox ? [inbox, inbox > 5] : null,
+    projects: late ? [late, true] : null,
+    print: printLate ? [printLate, true] : printOpen ? [printOpen, false] : null,
+  };
   document.getElementById('nav').innerHTML = VIEWS.map(([id, ico, name]) => {
     const c = counts[id];
     return `<a class="${ui.view === id ? 'active' : ''}" data-act="go" data-v="${id}">
@@ -465,6 +486,8 @@ function viewToday() {
     .sort((a, b) => b.s - a.s)
     .slice(0, 6);
   const inboxCount = S.tasks.filter((x) => x.status === 'inbox').length;
+  const tomorrow = L.addWorkdays(t, 1, st.workdays);
+  const printSoon = S.board.cards.filter((c) => !c.done && c.due && c.due <= tomorrow).sort((a, b) => a.due.localeCompare(b.due));
 
   // утренний и вечерний баннеры
   let banner = '';
@@ -554,6 +577,8 @@ function viewToday() {
             <div class="acts" style="opacity:1"><button class="btn sm" data-act="snoozeProjectWait" data-id="${p.id}">+2 дня</button><button class="btn sm" data-act="clientReplied" data-id="${p.id}">ответил</button></div></div>`).join('')}
           ${waitingDue.map((x) => taskRow(x, { extra: (z) => `<button class="btn sm" data-act="snoozeWait" data-id="${z.id}">+2 дня</button><button class="btn sm" data-act="gotReply" data-id="${z.id}">ответили</button>` })).join('')}
         </div>` : ''}
+        ${printSoon.length ? `<div class="card"><h2>Печать · сроки <span class="right"><a href="#" data-act="go" data-v="print">доска →</a></span></h2>
+          ${printSoon.map((c) => cardRow(c)).join('')}</div>` : ''}
         ${risky.length ? `<div class="card"><h2>Проекты под риском</h2>
           ${risky.map(({ p, f }) => `<div class="task"><div class="body" data-act="openProject" data-id="${p.id}">
             <div class="title">${esc(p.name)}</div>
@@ -696,6 +721,10 @@ function viewWeek() {
     const dl = L.snapWorkday(p.deadline, -1, st.workdays);
     (milestones[dl] = milestones[dl] || []).push({ cls: 'deadline', text: 'Сдача в печать: ' + p.name });
   });
+  S.board.cards.filter((c) => !c.done && c.due).forEach((c) => {
+    const col = columnById(c.col);
+    (milestones[c.due] = milestones[c.due] || []).push({ cls: 'print', text: '⎙ ' + (col ? col.name + ': ' : '') + c.title, card: c.id });
+  });
 
   let weekLoad = 0;
   let weekCap = 0;
@@ -717,7 +746,9 @@ function viewWeek() {
       ${capW.total ? `<div class="bar"><span class="${over ? 'over' : ''}" style="width:${Math.min(100, (lw / Math.max(capW.focus, 1)) * 100)}%"></span></div>
         <div class="mini">${hm(lw)} из ${hm(capW.focus)}</div>` : '<div class="mini">выходной</div>'}
       <div class="bar" style="height:4px"><span class="personal" style="width:${Math.min(100, (lp / Math.max(capP.focus, 1)) * 100)}%"></span></div>
-      ${(milestones[d] || []).map((m) => `<div class="milestone ${m.cls}">${esc(m.text)}</div>`).join('')}
+      ${(milestones[d] || []).map((m) => (m.card
+        ? `<div class="milestone ${m.cls}" draggable="true" data-drag="card:${m.card}" data-act="editCard" data-id="${m.card}" title="Перетащите на другой день, чтобы сменить срок">${esc(m.text)}</div>`
+        : `<div class="milestone ${m.cls}">${esc(m.text)}</div>`)).join('')}
       ${tasks.map(wtask).join('')}
       <button class="btn ghost sm" data-act="newTask" data-planned="${d}">＋</button>
     </div>`;
@@ -747,6 +778,134 @@ function wtask(x) {
   return `<div class="wtask ${L.areaOf(x) === 'personal' ? 'personal' : ''} ${x.status === 'done' ? 'done' : ''}" draggable="true" data-drag="${x.id}" data-act="editTask" data-id="${x.id}">
     ${x.priority === 'A' ? '<b style="color:var(--danger)">A</b> ' : ''}${esc(x.title)}
     <div class="m">${p ? esc(p.name) + ' · ' : ''}${real ? L.fmtMin(real) : 'без оценки'}</div></div>`;
+}
+
+// ---------- Печать (доска по людям) ----------
+
+function cardDueTag(c) {
+  if (!c.due) return '';
+  if (c.done) return `<span class="tag">${fmtDate(c.due)}</span>`;
+  const t = today();
+  const cls = c.due < t ? 'late' : c.due === t ? 'warn' : c.due <= L.addWorkdays(t, 2, settings().workdays) ? 'soon' : '';
+  const label = c.due < t ? 'просрочено · ' + relDate(c.due) : relDate(c.due);
+  return `<span class="tag ${cls}">${label}</span>`;
+}
+
+// Карточка в компактном виде (для «Сегодня»).
+function cardRow(c) {
+  const col = columnById(c.col);
+  const p = c.projectId && projectById(c.projectId);
+  return `<div class="task ${c.done ? 'done' : ''}">
+    <button class="check" data-act="toggleCard" data-id="${c.id}">${c.done ? '✓' : ''}</button>
+    <div class="body" data-act="editCard" data-id="${c.id}"><div class="title">${esc(c.title)}</div>
+      <div class="meta"><span class="tag person">${esc(col ? col.name : '—')}</span>${cardDueTag(c)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}</div></div></div>`;
+}
+
+function viewPrint() {
+  const b = S.board;
+  const t = today();
+  const col = (c) => {
+    const all = L.boardColumn(b.cards, c.id, b.sort);
+    const list = b.showDone ? all : all.filter((x) => !x.done);
+    const open = all.filter((x) => !x.done);
+    const lateN = open.filter((x) => x.due && x.due < t).length;
+    const doneN = all.length - open.length;
+    return `<div class="pcol" data-pcol="${c.id}">
+      <div class="pcol-head">
+        <div class="pcol-name">${esc(c.name)}</div>
+        <span class="count-pill">${open.length}</span>
+        ${lateN ? `<span class="tag late">${lateN} просроч.</span>` : ''}
+        <button class="icon-btn" data-act="editColumn" data-id="${c.id}" title="Переименовать или удалить">⋯</button>
+      </div>
+      <form class="padd" data-addcard="${c.id}">
+        <input class="input" name="title" placeholder="＋ Новое дело…" autocomplete="off">
+        <input class="input" name="due" type="date" title="Срок">
+      </form>
+      <div class="pcards">
+        ${list.map((x) => {
+          const p = x.projectId && projectById(x.projectId);
+          return `<div class="pcard ${x.done ? 'done' : ''} ${!x.done && x.due && x.due < t ? 'late' : ''}" draggable="${x.done ? 'false' : 'true'}" data-pcard="${x.id}">
+            <button class="check" data-act="toggleCard" data-id="${x.id}">${x.done ? '✓' : ''}</button>
+            <div class="pbody" data-act="editCard" data-id="${x.id}">
+              <div class="ptitle">${esc(x.title)}</div>
+              <div class="meta">${cardDueTag(x)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}</div>
+              ${x.note ? `<div class="pnote">${esc(x.note)}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('') || '<div class="empty pempty">Пусто. Впишите дело выше и нажмите Enter.</div>'}
+      </div>
+      ${!b.showDone && doneN ? `<div class="mini" style="padding:4px 2px">Выполнено: ${doneN}</div>` : ''}
+    </div>`;
+  };
+  return `
+    <div class="view-head"><div><h1>Печать</h1>
+      <div class="sub">Кто что должен сделать и к какому сроку. Тащите карточку вверх — важнее, в другую колонку — передать другому.</div></div>
+      <div class="spacer"></div>
+      <div class="seg">${[['manual', 'По важности'], ['due', 'По сроку']].map(([k, n]) => `<button class="${b.sort === k ? 'on' : ''}" data-act="boardSort" data-k="${k}">${n}</button>`).join('')}</div>
+      <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-change="boardShowDone" ${b.showDone ? 'checked' : ''}> выполненные</label>
+      <button class="btn" data-act="addColumn">＋ Колонка</button>
+    </div>
+    ${b.sort === 'due' ? '<div class="hint" style="margin:-10px 0 14px">Сортировка по сроку: перетаскивание меняет только человека. Чтобы расставить по важности — переключите «По важности».</div>' : ''}
+    <div class="board">${b.columns.map(col).join('')}</div>`;
+}
+
+function addCard(colId, title, due, extra) {
+  const c = { id: uid(), title, col: colId, due: due || '', projectId: '', note: '', done: false, doneAt: null, createdAt: nowMs(), order: -1, ...(extra || {}) };
+  S.board.cards.push(c);
+  // новое дело — наверх колонки: свежее обычно важнее, при необходимости перетащите
+  L.moveCard(S.board.cards, c.id, colId, (L.boardColumn(S.board.cards, colId, 'manual').find((x) => !x.done && x.id !== c.id) || {}).id);
+  return c;
+}
+
+function editCard(id) {
+  const c = cardById(id);
+  const projects = S.projects.filter((p) => !p.closed || p.id === c.projectId);
+  openModal(`
+    <h3>Дело · печать</h3>
+    <input type="hidden" id="cId" value="${c.id}">
+    <div class="field"><input class="input qa-title" id="cTitle" value="${esc(c.title)}" autofocus></div>
+    <div class="row">
+      <div class="field"><label>Кто делает</label><select class="input" id="cCol">${S.board.columns.map((x) => `<option value="${x.id}" ${x.id === c.col ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Срок</label><input class="input" id="cDue" type="date" value="${c.due || ''}"></div>
+      <div class="field"><label>Проект</label><select class="input" id="cProject"><option value="">—</option>${projects.map((p) => `<option value="${p.id}" ${c.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Подробности</label><textarea class="input" id="cNote" placeholder="Тираж, материал, контакты типографии…">${esc(c.note)}</textarea></div>
+    <div class="foot">
+      <button class="btn danger left" data-act="deleteCard" data-id="${c.id}">Удалить</button>
+      <button class="btn" data-act="closeModal">Отмена</button>
+      <button class="btn primary" data-act="saveCard">Сохранить</button>
+    </div>`);
+}
+function saveCard() {
+  const c = cardById(document.getElementById('cId').value);
+  const title = document.getElementById('cTitle').value.trim();
+  if (!title) return document.getElementById('cTitle').focus();
+  const col = document.getElementById('cCol').value;
+  if (col !== c.col) L.moveCard(S.board.cards, c.id, col, null);
+  Object.assign(c, { title, due: document.getElementById('cDue').value, projectId: document.getElementById('cProject').value, note: document.getElementById('cNote').value });
+  closeModal();
+  commit();
+}
+function editColumn(id) {
+  const col = id ? columnById(id) : { name: '' };
+  const n = id ? S.board.cards.filter((c) => c.col === id).length : 0;
+  openModal(`<h3>${id ? 'Колонка' : 'Новая колонка'}</h3>
+    <input type="hidden" id="colId" value="${id || ''}">
+    <div class="field"><label>Имя (человек или участок)</label><input class="input" id="colName" value="${esc(col.name)}" placeholder="Например: Типография" autofocus></div>
+    <div class="foot">
+      ${id ? `<button class="btn danger left" data-act="deleteColumn" data-id="${id}">Удалить${n ? ' (дел: ' + n + ')' : ''}</button>` : ''}
+      <button class="btn" data-act="closeModal">Отмена</button>
+      <button class="btn primary" data-act="saveColumn">Сохранить</button>
+    </div>`);
+}
+function saveColumn() {
+  const name = document.getElementById('colName').value.trim();
+  if (!name) return document.getElementById('colName').focus();
+  const id = document.getElementById('colId').value;
+  if (id) columnById(id).name = name;
+  else S.board.columns.push({ id: uid(), name });
+  closeModal();
+  commit();
 }
 
 // ---------- Итоги недели ----------
@@ -846,6 +1005,15 @@ function viewReview() {
             ${sumUn && Math.abs(realShare - st.reactiveShare) > 0.1 ? `<br><a href="#" data-act="applyShare" data-v="${Math.round(realShare * 20) / 20}">Поставить буфер ${Math.round(realShare * 20) * 5}%</a>` : ''}</div>
           ${Object.keys(byPerson).length ? `<table class="table">${Object.entries(byPerson).sort((a, b) => b[1].m - a[1].m).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.n}</td>
             <td style="width:35%"><div class="hbar warn" style="width:${(v.m / maxPerson) * 100}%"></div></td><td class="num">${L.fmtMin(v.m)}</td></tr>`).join('')}</table>` : ''}</div>
+        <div class="card"><h2>Печать · по людям</h2>
+          ${S.board.columns.length ? `<table class="table"><tr><th></th><th class="num">сделано</th><th class="num">открыто</th><th class="num">просрочено</th></tr>
+            ${S.board.columns.map((col) => {
+              const cs = S.board.cards.filter((c) => c.col === col.id);
+              const doneW = cs.filter((c) => c.done && c.doneAt && L.toISO(new Date(c.doneAt)) >= start && L.toISO(new Date(c.doneAt)) < end).length;
+              const open = cs.filter((c) => !c.done).length;
+              const lateN = cs.filter((c) => !c.done && c.due && c.due < today()).length;
+              return `<tr><td>${esc(col.name)}</td><td class="num">${doneW}</td><td class="num">${open}</td><td class="num" style="${lateN ? 'color:var(--danger);font-weight:700' : ''}">${lateN}</td></tr>`;
+            }).join('')}</table>` : '<div class="empty">Колонок нет.</div>'}</div>
         <div class="card"><h2>Точность оценок</h2>
           ${calRows.length ? `<table class="table"><tr><th>Тип</th><th class="num">задач</th><th class="num">оценка → факт</th><th class="num">×</th></tr>
             ${calRows.map((r) => `<tr><td>${L.TYPES[r.k]}</td><td class="num">${r.n}</td><td class="num">${L.fmtMin(r.est)} → ${L.fmtMin(r.act)}</td>
@@ -951,6 +1119,9 @@ function viewGuide() {
             <dt>Хвосты</dt><dd>Задачи из плана прошлых дней, которые не сделаны. Перенесите на сегодня или снимите с плана.</dd>
           </dl>
         </div>
+        <div class="card"><h2>Печать · кто что делает</h2>
+          <div class="g-b">На экране <b>«Печать»</b> — колонки по людям (Азиз ака, Анвар ака, Я; можно добавить свои). Впишите дело в колонку и срок → Enter. <b>Тащите карточку вверх</b> — важнее, <b>в другую колонку</b> — передать другому. «По сроку» сортирует сам. Просроченное подсвечивается красным, а сроки на сегодня-завтра видны на «Сегодня» и в «Неделе». Быстро добавить с любого экрана: ⌥⌘N → «Печать».</div>
+        </div>
         <div class="card"><h2>Пятница · 15 минут</h2>
           <div class="g-b">Откройте <b>«Итоги недели»</b> и пройдите чек-лист: входящие пусты, проекты проверены, кому напомнить, загрузка следующей недели, 3 главных результата. Там же видно, кто сколько времени съел внезапными просьбами.</div>
         </div>
@@ -1000,7 +1171,9 @@ async function checkUpdate(manual) {
   upd.error = '';
   upd.info = await bridge.checkUpdate();
   if (manual && upd.info.ok && !upd.info.available) toast('Установлена последняя версия');
-  render();
+  // не перерисовываем весь экран без нужды — иначе сотрётся текст, который вы вводите
+  if (manual || ui.view === 'settings') render();
+  else renderNav();
 }
 async function installUpdate() {
   if (!upd.info || !upd.info.available) return;
@@ -1037,7 +1210,7 @@ const modalOpen = () => !!document.getElementById('modal').innerHTML;
 
 const qa = {};
 function quickAdd() {
-  Object.assign(qa, { area: 'work', person: '', projectId: '', estimate: 15, priority: 'B', category: 'home', unplanned: true });
+  Object.assign(qa, { area: 'work', person: '', projectId: '', estimate: 15, priority: 'B', category: 'home', unplanned: true, col: (S.board.columns[0] || {}).id, due: '' });
   renderQuickAdd();
 }
 function renderQuickAdd(keepTitle) {
@@ -1047,14 +1220,21 @@ function renderQuickAdd(keepTitle) {
     <h3>Быстрая задача</h3>
     <input class="input qa-title" id="qaTitle" placeholder="Что нужно сделать?" value="${esc(title)}" autofocus>
     <div style="display:flex;gap:10px;margin:12px 0;align-items:center">
-      <div class="seg"><button class="${qa.area === 'work' ? 'on' : ''}" data-act="qaSet" data-k="area" data-v="work">Работа</button><button class="${qa.area === 'personal' ? 'on' : ''}" data-act="qaSet" data-k="area" data-v="personal">Личное</button></div>
+      <div class="seg"><button class="${qa.area === 'work' ? 'on' : ''}" data-act="qaSet" data-k="area" data-v="work">Работа</button><button class="${qa.area === 'personal' ? 'on' : ''}" data-act="qaSet" data-k="area" data-v="personal">Личное</button><button class="${qa.area === 'print' ? 'on' : ''}" data-act="qaSet" data-k="area" data-v="print">Печать</button></div>
       ${qa.area === 'work' ? `<label style="display:flex;gap:6px;align-items:center" class="hint"><input type="checkbox" id="qaUnplanned" ${qa.unplanned ? 'checked' : ''}> пришло внезапно</label>` : ''}
     </div>
-    ${qa.area === 'work' ? `
+    ${qa.area === 'print' ? `
+      <div class="field"><span class="lbl">Кто делает</span><div class="chips">${S.board.columns.map((c) => `<button class="chip ${qa.col === c.id ? 'on' : ''}" data-act="qaSet" data-k="col" data-v="${c.id}">${esc(c.name)}</button>`).join('')}</div></div>
+      <div class="row">
+        <div class="field"><span class="lbl">Срок</span><input class="input" id="qaDue" type="date" value="${esc(qa.due || '')}"></div>
+        <div class="field"><span class="lbl">Проект</span><select class="input" id="qaProject"><option value="">Без проекта</option>${projects.map((p) => `<option value="${p.id}" ${qa.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+      </div>
+      <div class="foot"><button class="btn primary" data-act="qaSave" data-mode="print">Добавить на доску «Печать»</button></div>
+      <div class="hint" style="text-align:right;margin-top:8px">⏎ добавить · Esc закрыть</div>` : qa.area === 'work' ? `
       <div class="field"><span class="lbl">От кого</span><div class="chips">${L.PEOPLE.map((p) => `<button class="chip ${qa.person === p ? 'on' : ''}" data-act="qaSet" data-k="person" data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>
       <div class="field"><span class="lbl">Проект</span><select class="input" id="qaProject"><option value="">Без проекта</option>${projects.map((p) => `<option value="${p.id}" ${qa.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`
       : `<div class="field"><span class="lbl">Категория</span><div class="chips">${Object.entries(L.PERSONAL).map(([k, v]) => `<button class="chip personal ${qa.category === k ? 'on' : ''}" data-act="qaSet" data-k="category" data-v="${k}">${v}</button>`).join('')}</div></div>`}
-    <div class="row">
+    ${qa.area === 'print' ? '' : `<div class="row">
       <div class="field"><span class="lbl">Оценка</span><div class="chips">${[5, 15, 30, 60, 120].map((m) => `<button class="chip ${qa.estimate === m ? 'on' : ''}" data-act="qaSet" data-k="estimate" data-v="${m}">${L.fmtMin(m)}</button>`).join('')}</div></div>
       <div class="field" style="flex:0 0 auto"><span class="lbl">Приоритет</span><div class="chips">${['A', 'B', 'C'].map((p) => `<button class="chip ${qa.priority === p ? 'on' : ''}" data-act="qaSet" data-k="priority" data-v="${p}">${p}</button>`).join('')}</div></div>
     </div>
@@ -1065,7 +1245,7 @@ function renderQuickAdd(keepTitle) {
       <button class="btn" data-act="qaSave" data-mode="today">На сегодня</button>
       <button class="btn primary" data-act="qaSave" data-mode="inbox">Во входящие</button>
     </div>
-    <div class="hint" style="text-align:right;margin-top:8px">⏎ во входящие · ⌘⏎ на сегодня · Esc закрыть</div>`);
+    <div class="hint" style="text-align:right;margin-top:8px">⏎ во входящие · ⌘⏎ на сегодня · Esc закрыть</div>`}`);
 }
 function qaSave(mode) {
   const title = document.getElementById('qaTitle').value.trim();
@@ -1075,6 +1255,13 @@ function qaSave(mode) {
   }
   const projSel = document.getElementById('qaProject');
   const unpl = document.getElementById('qaUnplanned');
+  if (qa.area === 'print') {
+    if (!columnById(qa.col)) return toast('Сначала добавьте колонку на доске «Печать»');
+    const c = addCard(qa.col, title, document.getElementById('qaDue').value, { projectId: projSel ? projSel.value : '' });
+    closeModal();
+    toast(columnById(c.col).name + ': ' + title);
+    return commit();
+  }
   const t = newTask({
     title,
     area: qa.area,
@@ -1462,13 +1649,45 @@ const ACTIONS = {
     if (sel) qa.projectId = sel.value;
     const unpl = document.getElementById('qaUnplanned');
     if (unpl) qa.unplanned = unpl.checked;
+    const due = document.getElementById('qaDue');
+    if (due) qa.due = due.value;
     const k = el.dataset.k;
     let v = el.dataset.v;
     if (k === 'estimate') v = Number(v);
     qa[k] = k === 'person' && qa.person === v ? '' : v;
+    if (k === 'area') qa.projectId = qa.projectId || '';
     renderQuickAdd(title);
   },
   qaSave: (el) => qaSave(el.dataset.mode),
+  toggleCard: (el) => {
+    const c = cardById(el.dataset.id);
+    c.done = !c.done;
+    c.doneAt = c.done ? nowMs() : null;
+    if (!c.done) L.moveCard(S.board.cards, c.id, c.col, null);
+    commit();
+  },
+  editCard: (el) => editCard(el.dataset.id),
+  saveCard,
+  deleteCard: (el) => confirmBox('Удалить дело?', () => {
+    S.board.cards = S.board.cards.filter((c) => c.id !== el.dataset.id);
+    commit();
+  }),
+  boardSort: (el) => {
+    S.board.sort = el.dataset.k;
+    commit();
+  },
+  addColumn: () => editColumn(null),
+  editColumn: (el) => editColumn(el.dataset.id),
+  saveColumn,
+  deleteColumn: (el) => {
+    const id = el.dataset.id;
+    const n = S.board.cards.filter((c) => c.col === id).length;
+    confirmBox(n ? 'Удалить колонку вместе с делами (' + n + ')?' : 'Удалить колонку?', () => {
+      S.board.columns = S.board.columns.filter((c) => c.id !== id);
+      S.board.cards = S.board.cards.filter((c) => c.col !== id);
+      commit();
+    });
+  },
   export: () => bridge.exportData(S).then((ok) => ok && toast('Сохранено')),
   checkUpdate: () => checkUpdate(true),
   installUpdate: () => confirmBox('Скачать и установить новую версию? Приложение перезапустится, задачи сохранятся.', installUpdate),
@@ -1538,6 +1757,10 @@ const CHANGES = {
     S.reviews[el.dataset.w].note = el.value;
     save();
   },
+  boardShowDone: (el) => {
+    S.board.showDone = el.checked;
+    commit();
+  },
   tAreaToggle: syncTaskForm,
   tStatusToggle: syncTaskForm,
 };
@@ -1555,25 +1778,100 @@ document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-change]');
   if (el && CHANGES[el.dataset.change]) CHANGES[el.dataset.change](el, e);
 });
+document.addEventListener('submit', (e) => {
+  const form = e.target.closest('[data-addcard]');
+  if (!form) return;
+  e.preventDefault();
+  const title = form.elements.title.value.trim();
+  if (!title) return;
+  addCard(form.dataset.addcard, title, form.elements.due.value);
+  commit();
+  // фокус обратно в поле той же колонки — можно вводить подряд
+  const again = document.querySelector(`[data-addcard="${form.dataset.addcard}"] input[name="title"]`);
+  if (again) again.focus();
+});
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && modalOpen()) return closeModal();
   if (e.key === 'Enter' && document.getElementById('qaTitle') && e.target.tagName !== 'TEXTAREA') {
     e.preventDefault();
-    return qaSave(e.metaKey || e.ctrlKey ? 'today' : 'inbox');
+    return qaSave(qa.area === 'print' ? 'print' : e.metaKey || e.ctrlKey ? 'today' : 'inbox');
   }
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && document.getElementById('tTitle')) return saveTask();
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && document.getElementById('pName')) return saveProject();
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && document.getElementById('wNote')) return ACTIONS.saveWait();
+  if (e.key === 'Enter' && document.getElementById('colName')) return saveColumn();
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && document.getElementById('cTitle')) return saveCard();
+  if (e.key === 'Enter' && e.target.id === 'cTitle') return saveCard();
 });
 
-// перетаскивание на неделе
+// перетаскивание на доске «Печать»
+let dragCard = null;
+function clearDropMarks() {
+  document.querySelectorAll('.ins-before').forEach((x) => x.classList.remove('ins-before'));
+  document.querySelectorAll('.pcol.drop').forEach((x) => x.classList.remove('drop'));
+}
+// Карточка, перед которой встанет перетаскиваемая (по вертикальной позиции курсора).
+function cardAfterPointer(colEl, y) {
+  const cards = [...colEl.querySelectorAll('.pcard:not(.done)')].filter((el) => el.dataset.pcard !== dragCard);
+  return cards.find((el) => {
+    const r = el.getBoundingClientRect();
+    return y < r.top + r.height / 2;
+  });
+}
 document.addEventListener('dragstart', (e) => {
+  const card = e.target.closest('[data-pcard]');
+  if (card) {
+    dragCard = card.dataset.pcard;
+    e.dataTransfer.setData('text/plain', 'card:' + dragCard);
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => card.classList.add('dragging'), 0);
+    return;
+  }
   const el = e.target.closest('[data-drag]');
   if (el) e.dataTransfer.setData('text/plain', el.dataset.drag);
 });
+document.addEventListener('dragend', () => {
+  dragCard = null;
+  clearDropMarks();
+  document.querySelectorAll('.dragging').forEach((x) => x.classList.remove('dragging'));
+});
+document.addEventListener('dragover', (e) => {
+  if (!dragCard) return;
+  const colEl = e.target.closest('[data-pcol]');
+  if (!colEl) return;
+  e.preventDefault();
+  clearDropMarks();
+  colEl.classList.add('drop');
+  if (S.board.sort === 'manual') {
+    const before = cardAfterPointer(colEl, e.clientY);
+    if (before) before.classList.add('ins-before');
+  }
+});
+document.addEventListener('drop', (e) => {
+  if (!dragCard) return;
+  const colEl = e.target.closest('[data-pcol]');
+  if (!colEl) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const c = cardById(dragCard);
+  if (S.board.sort === 'manual') {
+    const before = cardAfterPointer(colEl, e.clientY);
+    L.moveCard(S.board.cards, c.id, colEl.dataset.pcol, before ? before.dataset.pcard : null);
+  } else if (c.col !== colEl.dataset.pcol) {
+    L.moveCard(S.board.cards, c.id, colEl.dataset.pcol, null);
+  }
+  const who = columnById(c.col);
+  dragCard = null;
+  clearDropMarks();
+  commit();
+  if (who) toast(who.name + ': ' + c.title);
+});
+
+// перетаскивание на неделе
 document.addEventListener('dragover', (e) => {
   const col = e.target.closest('[data-drop]');
-  if (!col) return;
+  if (!col || dragCard) return;
   e.preventDefault();
   document.querySelectorAll('.week-col.drop').forEach((c) => c !== col && c.classList.remove('drop'));
   col.classList.add('drop');
@@ -1586,7 +1884,13 @@ document.addEventListener('drop', (e) => {
   const col = e.target.closest('[data-drop]');
   if (!col) return;
   e.preventDefault();
-  const t = taskById(e.dataTransfer.getData('text/plain'));
+  const data = e.dataTransfer.getData('text/plain');
+  if (data.startsWith('card:')) {
+    const c = cardById(data.slice(5));
+    if (c) c.due = col.dataset.drop;
+    return commit();
+  }
+  const t = taskById(data);
   if (!t) return;
   t.plannedFor = col.dataset.drop;
   if (t.status === 'inbox') t.status = 'todo';
@@ -1651,6 +1955,12 @@ function minuteCheck() {
       once('waiting', () => notify('Пора напомнить', [...pdue.map((p) => p.name), ...due.map((x) => x.title)].slice(0, 3).join(', ')));
     }
   }
+  if (isWork && nm >= timeToMin(st.workStart)) {
+    const pc = S.board.cards.filter((c) => !c.done && c.due && c.due <= t);
+    if (pc.length) {
+      once('print', () => notify('Печать: сроки сегодня', pc.slice(0, 3).map((c) => ((columnById(c.col) || {}).name || '') + ' — ' + c.title).join('\n')));
+    }
+  }
   if (isWork && nm >= timeToMin(st.workEnd) && !rec.eveningDone) {
     once('evening', () => notify('Конец рабочего дня', 'Перенесите незавершённое на завтра и закройте день — голова освободится.'));
   }
@@ -1668,6 +1978,8 @@ function normalize(data) {
   d.projects = (d.projects || []).map((p) => ({ history: [], rounds: {}, ...p }));
   d.days = d.days || {};
   d.reviews = d.reviews || {};
+  d.board = { ...freshBoard(), ...(data.board || {}) };
+  d.board.cards = (d.board.cards || []).map((c, i) => ({ order: i, note: '', projectId: '', ...c }));
   return d;
 }
 
