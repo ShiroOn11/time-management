@@ -282,6 +282,38 @@
     return { minutes, count };
   }
 
+  // ---------- цвета важности ----------
+  // Светофор проекта (RAG): ручной статус, если задан, иначе по прогнозу сроков.
+  function ragStatus(project, settings, today) {
+    if (project.closed) return 'gray';
+    if (project.rag && project.rag !== 'auto') return project.rag;
+    const f = forecast(project, settings, today);
+    if (f.status === 'late') return 'red';
+    if (f.status === 'risk') return 'amber';
+    if (f.status === 'ok') return 'green';
+    return 'gray';
+  }
+
+  // Матрица Эйзенхауэра: важно = приоритет A или «красный» проект;
+  // срочно = срок прошёл или наступит в ближайшие 2 рабочих дня.
+  // 1 — срочно и важно, 2 — важно, не срочно, 3 — срочно, не важно, 4 — ни то, ни другое.
+  function eisenhower(task, projectsById, settings, today) {
+    const p = task.projectId && projectsById && projectsById[task.projectId];
+    const important = task.priority === 'A' || (!!p && ragStatus(p, settings, today) === 'red');
+    const urgent = !!task.due && workdaysBetween(today, task.due, settings && settings.workdays) <= 2;
+    if (important && urgent) return 1;
+    if (important) return 2;
+    if (urgent) return 3;
+    return 4;
+  }
+
+  // Срочность карточки «Печати» по сроку: red — просрочено или сегодня, amber — ≤ 2 р.д., green — дальше.
+  function dueColor(due, settings, today) {
+    if (!due) return 'gray';
+    if (due <= today) return 'red';
+    return workdaysBetween(today, due, settings && settings.workdays) <= 2 ? 'amber' : 'green';
+  }
+
   // Оценка «лягушки»: приоритет, близость срока, риск проекта.
   function frogScore(task, projectsById, settings, today) {
     if (task.status === 'done' || task.status === 'waiting') return -Infinity;
@@ -304,11 +336,29 @@
 
   // ---------- доска «Печать» ----------
   // Карточки колонки: сначала открытые (по ручному порядку или по сроку), потом выполненные.
+  // Срочность карточки, которую ставит сам пользователь.
+  const HEAT = {
+    fire: { name: 'Горит', rank: 0 },
+    urgent: { name: 'Срочно', rank: 1 },
+    normal: { name: 'В работе', rank: 2 },
+    pause: { name: 'На паузе', rank: 3 },
+  };
+  const heatOf = (c) => (HEAT[c.heat] ? c.heat : 'normal');
+
+  // Карточки на паузе всегда внизу открытых; в режиме 'heat' — сначала «горит», потом «срочно».
   function boardColumn(cards, colId, sort) {
     const open = cards.filter((c) => c.col === colId && !c.done);
     const done = cards.filter((c) => c.col === colId && c.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
     open.sort((a, b) => {
-      if (sort === 'due') {
+      const pa = heatOf(a) === 'pause' ? 1 : 0;
+      const pb = heatOf(b) === 'pause' ? 1 : 0;
+      if (pa !== pb) return pa - pb;
+      if (sort === 'heat') {
+        const ra = HEAT[heatOf(a)].rank;
+        const rb = HEAT[heatOf(b)].rank;
+        if (ra !== rb) return ra - rb;
+      }
+      if (sort === 'due' || sort === 'heat') {
         const da = a.due || '9999';
         const db = b.due || '9999';
         if (da !== db) return da < db ? -1 : 1;
@@ -356,7 +406,7 @@
     toISO, parseISO, todayISO, addDays, isWorkday, addWorkdays, snapWorkday, workdaysBetween, weekStart,
     stageDays, planBackward, stageIndex, forecast,
     sessionMinutes, actualMinutes, calibration, realisticMinutes,
-    dayCapacity, dayLoad, unplannedOn, frogScore, fmtMin, plural, boardColumn, moveCard,
+    dayCapacity, dayLoad, unplannedOn, frogScore, fmtMin, plural, boardColumn, moveCard, HEAT, heatOf, ragStatus, eisenhower, dueColor,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Logic = api;

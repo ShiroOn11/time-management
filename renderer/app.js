@@ -410,7 +410,8 @@ function taskMeta(t, opts = {}) {
 function taskRow(t, opts = {}) {
   const running = S.timer && S.timer.taskId === t.id;
   const extra = opts.extra ? opts.extra(t) : '';
-  return `<div class="task ${t.status === 'done' ? 'done' : ''} ${running ? 'running' : ''}" data-id="${t.id}">
+  const q = t.status === 'done' ? '' : 'q' + L.eisenhower(t, projectsMap(), settings(), today());
+  return `<div class="task ${q} ${t.status === 'done' ? 'done' : ''} ${running ? 'running' : ''}" data-id="${t.id}">
     <button class="check" data-act="toggleDone" data-id="${t.id}" title="Выполнено">${t.status === 'done' ? '✓' : ''}</button>
     <div class="body" data-act="editTask" data-id="${t.id}">
       <div class="title">${esc(t.title)}</div>
@@ -477,8 +478,9 @@ function viewToday() {
   const projWaiting = S.projects.filter((p) => !p.closed && p.waiting && p.waiting.remindAt && p.waiting.remindAt <= t);
   const risky = S.projects
     .filter((p) => !p.closed)
-    .map((p) => ({ p, f: L.forecast(p, st) }))
-    .filter((x) => x.f.status === 'late' || x.f.status === 'risk');
+    .map((p) => ({ p, f: L.forecast(p, st), rag: L.ragStatus(p, st) }))
+    .filter((x) => x.rag === 'red' || x.rag === 'amber')
+    .sort((a, b) => (a.rag === 'red' ? 0 : 1) - (b.rag === 'red' ? 0 : 1));
   const pm = projectsMap();
   const candidates = S.tasks
     .filter((x) => x.status === 'todo' && x.plannedFor !== t && !(x.plannedFor && x.plannedFor < t))
@@ -487,7 +489,9 @@ function viewToday() {
     .slice(0, 6);
   const inboxCount = S.tasks.filter((x) => x.status === 'inbox').length;
   const tomorrow = L.addWorkdays(t, 1, st.workdays);
-  const printSoon = S.board.cards.filter((c) => !c.done && c.due && c.due <= tomorrow).sort((a, b) => a.due.localeCompare(b.due));
+  const printSoon = S.board.cards
+    .filter((c) => !c.done && (L.heatOf(c) === 'fire' || (c.due && c.due <= tomorrow && L.heatOf(c) !== 'pause')))
+    .sort((a, b) => L.HEAT[L.heatOf(a)].rank - L.HEAT[L.heatOf(b)].rank || (a.due || '9').localeCompare(b.due || '9'));
 
   // утренний и вечерний баннеры
   let banner = '';
@@ -577,12 +581,12 @@ function viewToday() {
             <div class="acts" style="opacity:1"><button class="btn sm" data-act="snoozeProjectWait" data-id="${p.id}">+2 дня</button><button class="btn sm" data-act="clientReplied" data-id="${p.id}">ответил</button></div></div>`).join('')}
           ${waitingDue.map((x) => taskRow(x, { extra: (z) => `<button class="btn sm" data-act="snoozeWait" data-id="${z.id}">+2 дня</button><button class="btn sm" data-act="gotReply" data-id="${z.id}">ответили</button>` })).join('')}
         </div>` : ''}
-        ${printSoon.length ? `<div class="card"><h2>Печать · сроки <span class="right"><a href="#" data-act="go" data-v="print">доска →</a></span></h2>
+        ${printSoon.length ? `<div class="card"><h2>Печать · горит и сроки <span class="right"><a href="#" data-act="go" data-v="print">доска →</a></span></h2>
           ${printSoon.map((c) => cardRow(c)).join('')}</div>` : ''}
-        ${risky.length ? `<div class="card"><h2>Проекты под риском</h2>
-          ${risky.map(({ p, f }) => `<div class="task"><div class="body" data-act="openProject" data-id="${p.id}">
-            <div class="title">${esc(p.name)}</div>
-            <div class="meta"><span class="tag ${f.status === 'late' ? 'late' : 'warn'}">${f.status === 'late' ? 'опоздание ' + -f.slack + ' р.д.' : f.lateStage ? 'этап просрочен на ' + f.lateStage + ' р.д.' : 'запас ' + f.slack + ' р.д.'}</span><span class="tag">${L.STAGES[L.stageIndex(p.stage)].short}</span></div></div></div>`).join('')}
+        ${risky.length ? `<div class="card"><h2>Проекты: горят и требуют внимания</h2>
+          ${risky.map(({ p, f, rag }) => `<div class="task"><div class="body" data-act="openProject" data-id="${p.id}">
+            <div class="title"><i class="rag-dot ${rag}"></i>${esc(p.name)}</div>
+            <div class="meta">${forecastTag(f)}${p.rag && p.rag !== 'auto' ? '<span class="tag">отмечен вручную</span>' : ''}<span class="tag">${L.STAGES[L.stageIndex(p.stage)].short}</span></div></div></div>`).join('')}
         </div>` : ''}
         <div class="card"><h2>Взять в план</h2>
           ${candidates.length ? candidates.map(({ x }) => taskRow(x, { extra: (z) => `<button class="btn sm" data-act="planToday" data-id="${z.id}">＋ сегодня</button>` })).join('') : '<div class="empty">Нет открытых задач вне плана.</div>'}
@@ -610,7 +614,9 @@ function viewTasks() {
     ['open', 'Открытые', S.tasks.filter((x) => x.status === 'todo').length],
     ['waiting', 'Жду ответа', S.tasks.filter((x) => x.status === 'waiting').length],
     ['done', 'Выполненные', null],
+    ['matrix', 'Матрица', null],
   ];
+  if (ui.taskTab === 'matrix') return viewMatrix(tabs);
   let list = S.tasks.filter((x) => (ui.taskTab === 'open' ? x.status === 'todo' : x.status === ui.taskTab));
   if (ui.taskArea !== 'all') list = list.filter((x) => L.areaOf(x) === ui.taskArea);
   if (ui.taskProject) list = list.filter((x) => x.projectId === ui.taskProject);
@@ -644,19 +650,53 @@ function viewTasks() {
     })).join('') : '<div class="empty">Здесь пусто.</div>'}</div>`;
 }
 
+// Матрица Эйзенхауэра: открытые задачи в четырёх квадратах.
+const QUADRANTS = [
+  [1, 'Срочно и важно', 'Сделать сегодня, лично. Здесь не должно быть много — иначе вы тушите пожары.'],
+  [2, 'Важно, не срочно', 'Главное поле проект-менеджера: планирование, ТЗ, проверки. Поставьте день в «Неделе».'],
+  [3, 'Срочно, не важно', 'Делегировать или сделать быстро: просьбы, звонки, мелкие правки.'],
+  [4, 'Не срочно и не важно', 'Отложить или удалить. Раз в неделю чистите этот угол.'],
+];
+function viewMatrix(tabs) {
+  const pm = projectsMap();
+  const st = settings();
+  const t = today();
+  let list = S.tasks.filter((x) => x.status === 'todo' || x.status === 'inbox');
+  if (ui.taskArea !== 'all') list = list.filter((x) => L.areaOf(x) === ui.taskArea);
+  const by = { 1: [], 2: [], 3: [], 4: [] };
+  list.forEach((x) => by[L.eisenhower(x, pm, st, t)].push(x));
+  Object.values(by).forEach((arr) => arr.sort((a, b) => (a.due || '9').localeCompare(b.due || '9') || a.createdAt - b.createdAt));
+  return `
+    <div class="view-head"><div><h1>Задачи</h1><div class="sub">Матрица Эйзенхауэра. Важно — приоритет A или задача «красного» проекта; срочно — срок в ближайшие 2 рабочих дня или уже прошёл.</div></div>
+      <div class="spacer"></div><button class="btn primary" data-act="newTask">＋ Задача</button></div>
+    <div class="tabs">${tabs.map(([id, n, c]) => `<button class="${ui.taskTab === id ? 'on' : ''}" data-act="taskTab" data-tab="${id}">${n}${c ? ' · ' + c : ''}</button>`).join('')}</div>
+    <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center">
+      <div class="seg">${[['all', 'Всё'], ['work', 'Работа'], ['personal', 'Личное']].map(([k, n]) => `<button class="${ui.taskArea === k ? 'on' : ''}" data-act="taskArea" data-k="${k}">${n}</button>`).join('')}</div>
+      <span class="hint">Чтобы перенести задачу в другой квадрат — откройте её и поменяйте приоритет или срок.</span>
+    </div>
+    <div class="matrix">${QUADRANTS.map(([n, title, hint]) => `<div class="card mq mq${n}">
+      <h2><span class="qdot q${n}"></span>${title}<span class="right">${by[n].length}</span></h2>
+      <div class="hint" style="margin-bottom:6px">${hint}</div>
+      ${by[n].length ? by[n].map((x) => taskRow(x, { showPlanned: true })).join('') : '<div class="empty">Пусто</div>'}
+    </div>`).join('')}</div>`;
+}
+
 // ---------- Проекты ----------
 
 function viewProjects() {
   const st = settings();
   let list = S.projects.filter((p) => (ui.projFilter === 'active' ? !p.closed : p.closed));
   const order = { late: 0, risk: 1, ok: 2, nodeadline: 3, closed: 4 };
-  list = list.map((p) => ({ p, f: L.forecast(p, st) })).sort((a, b) => order[a.f.status] - order[b.f.status] || (a.p.deadline || '9').localeCompare(b.p.deadline || '9'));
+  const ragOrder = { red: 0, amber: 1, green: 2, gray: 3 };
+  list = list.map((p) => ({ p, f: L.forecast(p, st) }))
+    .sort((a, b) => ragOrder[L.ragStatus(a.p, st)] - ragOrder[L.ragStatus(b.p, st)] || order[a.f.status] - order[b.f.status] || (a.p.deadline || '9').localeCompare(b.p.deadline || '9'));
   const active = S.projects.filter((p) => !p.closed);
   const inDesign = active.filter((p) => p.stage === 'design').length;
 
   return `
     <div class="view-head"><div><h1>Проекты</h1>
-      <div class="sub">Только ваш взгляд: сроки этапов назад от сдачи в печать, прогноз и «мяч у клиента». Полная база — в Airtable.</div></div>
+      <div class="sub">Только ваш взгляд: сроки этапов назад от сдачи в печать, прогноз и «мяч у клиента». Полная база — в Airtable.</div>
+      <div class="legend"><span><i class="rag-dot red"></i>горит — опаздываем</span><span><i class="rag-dot amber"></i>внимание — запас ≤ 2 дней</span><span><i class="rag-dot green"></i>по плану</span><span><i class="rag-dot gray"></i>нет срока</span></div></div>
       <div class="spacer"></div>
       <div class="seg">${[['active', 'Активные · ' + active.length], ['closed', 'Закрытые']].map(([k, n]) => `<button class="${ui.projFilter === k ? 'on' : ''}" data-act="projFilter" data-k="${k}">${n}</button>`).join('')}</div>
       <button class="btn primary" data-act="newProject">＋ Проект</button></div>
@@ -683,8 +723,9 @@ function projectCard(p, f) {
   const totalRounds = Object.values(p.rounds || {}).reduce((a, b) => a + b, 0);
   const canRound = !p.closed && ['design', 'presentation', 'print'].includes(p.stage);
   const nextName = idx < L.STAGES.length - 1 ? L.STAGES[idx + 1].short : null;
-  return `<div class="card project">
-    <div class="head"><div style="min-width:0"><h3>${esc(p.name)}</h3><div class="client">${esc(p.client || '')}</div></div>
+  const rag = L.ragStatus(p, st);
+  return `<div class="card project rag-${rag}">
+    <div class="head"><div style="min-width:0"><h3><i class="rag-dot ${rag}" title="${{ red: 'Горит', amber: 'Внимание', green: 'По плану', gray: 'Нет срока' }[rag]}${p.rag && p.rag !== 'auto' ? ' (вручную)' : ''}"></i>${esc(p.name)}</h3><div class="client">${esc(p.client || '')}</div></div>
       <div class="badges">${forecastTag(f)}${p.waiting ? `<span class="tag warn">мяч у клиента · ${L.workdaysBetween(p.waiting.since, today(), st.workdays)} р.д.</span>` : ''}</div></div>
     <div class="pipeline">${L.STAGES.map((s, i) => `<span class="${p.closed || i < idx ? 'past' : i === idx ? 'cur' : ''}"></span>`).join('')}</div>
     <div class="pipeline-labels">${L.STAGES.map((s, i) => `<span class="${!p.closed && i === idx ? 'cur' : ''}">${s.short}</span>`).join('')}</div>
@@ -798,7 +839,7 @@ function cardRow(c) {
   return `<div class="task ${c.done ? 'done' : ''}">
     <button class="check" data-act="toggleCard" data-id="${c.id}">${c.done ? '✓' : ''}</button>
     <div class="body" data-act="editCard" data-id="${c.id}"><div class="title">${esc(c.title)}</div>
-      <div class="meta"><span class="tag person">${esc(col ? col.name : '—')}</span>${cardDueTag(c)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}</div></div></div>`;
+      <div class="meta"><span class="tag person">${esc(col ? col.name : '—')}</span>${L.heatOf(c) !== 'normal' ? `<span class="tag heat ${L.heatOf(c)}">${L.HEAT[L.heatOf(c)].name}</span>` : ''}${cardDueTag(c)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}</div></div></div>`;
 }
 
 function viewPrint() {
@@ -814,6 +855,7 @@ function viewPrint() {
       <div class="pcol-head">
         <div class="pcol-name">${esc(c.name)}</div>
         <span class="count-pill">${open.length}</span>
+        ${open.filter((x) => L.heatOf(x) === 'fire').length ? `<span class="tag heat fire">${open.filter((x) => L.heatOf(x) === 'fire').length} горит</span>` : ''}
         ${lateN ? `<span class="tag late">${lateN} просроч.</span>` : ''}
         <button class="icon-btn" data-act="editColumn" data-id="${c.id}" title="Переименовать или удалить">⋯</button>
       </div>
@@ -824,11 +866,13 @@ function viewPrint() {
       <div class="pcards">
         ${list.map((x) => {
           const p = x.projectId && projectById(x.projectId);
-          return `<div class="pcard ${x.done ? 'done' : ''} ${!x.done && x.due && x.due < t ? 'late' : ''}" draggable="${x.done ? 'false' : 'true'}" data-pcard="${x.id}">
+          const heat = L.heatOf(x);
+          return `<div class="pcard ${x.done ? 'done' : 'heat-' + heat} ${!x.done && x.due && x.due < t ? 'late' : ''}" draggable="${x.done ? 'false' : 'true'}" data-pcard="${x.id}">
+            ${x.done ? '' : `<div class="heat-pick">${Object.keys(L.HEAT).map((h) => `<button class="hdot ${h} ${h === heat ? 'on' : ''}" data-act="setHeat" data-id="${x.id}" data-h="${h}" title="${L.HEAT[h].name}"></button>`).join('')}</div>`}
             <button class="check" data-act="toggleCard" data-id="${x.id}">${x.done ? '✓' : ''}</button>
             <div class="pbody" data-act="editCard" data-id="${x.id}">
               <div class="ptitle">${esc(x.title)}</div>
-              <div class="meta">${cardDueTag(x)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}</div>
+              <div class="meta">${!x.done && heat !== 'normal' ? `<span class="tag heat ${heat}">${L.HEAT[heat].name}</span>` : ''}${cardDueTag(x)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}</div>
               ${x.note ? `<div class="pnote">${esc(x.note)}</div>` : ''}
             </div>
           </div>`;
@@ -839,13 +883,14 @@ function viewPrint() {
   };
   return `
     <div class="view-head"><div><h1>Печать</h1>
-      <div class="sub">Кто что должен сделать и к какому сроку. Тащите карточку вверх — важнее, в другую колонку — передать другому.</div></div>
+      <div class="sub">Кто что должен сделать и к какому сроку. Тащите карточку вверх — важнее, в другую колонку — передать другому.</div>
+      <div class="legend"><span><i class="hdot fire on"></i>Горит — прямо сейчас</span><span><i class="hdot urgent on"></i>Срочно — в ближайшие дни</span><span><i class="hdot normal on"></i>В работе</span><span><i class="hdot pause on"></i>На паузе — можно подержать</span><span class="hint">цвет меняется точками в углу карточки</span></div></div>
       <div class="spacer"></div>
-      <div class="seg">${[['manual', 'По важности'], ['due', 'По сроку']].map(([k, n]) => `<button class="${b.sort === k ? 'on' : ''}" data-act="boardSort" data-k="${k}">${n}</button>`).join('')}</div>
+      <div class="seg">${[['manual', 'Мой порядок'], ['heat', 'По срочности'], ['due', 'По сроку']].map(([k, n]) => `<button class="${b.sort === k ? 'on' : ''}" data-act="boardSort" data-k="${k}">${n}</button>`).join('')}</div>
       <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-change="boardShowDone" ${b.showDone ? 'checked' : ''}> выполненные</label>
       <button class="btn" data-act="addColumn">＋ Колонка</button>
     </div>
-    ${b.sort === 'due' ? '<div class="hint" style="margin:-10px 0 14px">Сортировка по сроку: перетаскивание меняет только человека. Чтобы расставить по важности — переключите «По важности».</div>' : ''}
+    ${b.sort !== 'manual' ? `<div class="hint" style="margin:-10px 0 14px">Сортировка ${b.sort === 'due' ? 'по сроку' : 'по срочности'}: перетаскивание меняет только человека. Чтобы расставить вручную — «Мой порядок».</div>` : ''}
     <div class="board">${b.columns.map(col).join('')}</div>`;
 }
 
@@ -869,6 +914,7 @@ function editCard(id) {
       <div class="field"><label>Срок</label><input class="input" id="cDue" type="date" value="${c.due || ''}"></div>
       <div class="field"><label>Проект</label><select class="input" id="cProject"><option value="">—</option>${projects.map((p) => `<option value="${p.id}" ${c.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
     </div>
+    <div class="field"><label>Срочность</label><div class="chips">${Object.entries(L.HEAT).map(([h, v]) => `<button class="chip heatchip ${h} ${L.heatOf(c) === h ? 'on' : ''}" data-act="cardHeatChip" data-h="${h}"><i class="hdot ${h} on"></i>${v.name}</button>`).join('')}</div><input type="hidden" id="cHeat" value="${L.heatOf(c)}"></div>
     <div class="field"><label>Подробности</label><textarea class="input" id="cNote" placeholder="Тираж, материал, контакты типографии…">${esc(c.note)}</textarea></div>
     <div class="foot">
       <button class="btn danger left" data-act="deleteCard" data-id="${c.id}">Удалить</button>
@@ -882,7 +928,7 @@ function saveCard() {
   if (!title) return document.getElementById('cTitle').focus();
   const col = document.getElementById('cCol').value;
   if (col !== c.col) L.moveCard(S.board.cards, c.id, col, null);
-  Object.assign(c, { title, due: document.getElementById('cDue').value, projectId: document.getElementById('cProject').value, note: document.getElementById('cNote').value });
+  Object.assign(c, { title, heat: document.getElementById('cHeat').value, due: document.getElementById('cDue').value, projectId: document.getElementById('cProject').value, note: document.getElementById('cNote').value });
   closeModal();
   commit();
 }
@@ -1116,6 +1162,8 @@ function viewGuide() {
             <dt>Загрузка дня</dt><dd>Сколько минут уже запланировано на сегодня из доступных. 40% рабочего дня специально не планируется — это буфер на внезапное.</dd>
             <dt>реально ~</dt><dd>Ваша оценка × личный коэффициент. Если пишете «30 мин», а уходит 45 — будет «реально ~45».</dd>
             <dt>запас N р.д.</dt><dd>Сколько рабочих дней остаётся до сдачи в печать при текущем темпе. Красное «опоздание» — пора что-то менять сейчас, а не в последний день.</dd>
+            <dt>Цвета</dt><dd>Проекты — светофор: 🔴 горит (опаздываем), 🟡 запас ≤ 2 дней, 🟢 по плану; можно выставить вручную в карточке проекта. Задачи — матрица Эйзенхауэра: красная полоска — срочно и важно, зелёная — важно, не срочно, жёлтая — срочно, но не важно. Экран «Задачи → Матрица».</dd>
+            <dt>Цвета</dt><dd>«Печать»: 🔴 горит, 🟠 срочно, 🟢 в работе, ⚪ на паузе — ставите сами точками на карточке. Проекты — светофор по прогнозу сроков (можно вручную). Задачи — матрица Эйзенхауэра: «Задачи → Матрица».</dd>
             <dt>Хвосты</dt><dd>Задачи из плана прошлых дней, которые не сделаны. Перенесите на сегодня или снимите с плана.</dd>
           </dl>
         </div>
@@ -1210,7 +1258,7 @@ const modalOpen = () => !!document.getElementById('modal').innerHTML;
 
 const qa = {};
 function quickAdd() {
-  Object.assign(qa, { area: 'work', person: '', projectId: '', estimate: 15, priority: 'B', category: 'home', unplanned: true, col: (S.board.columns[0] || {}).id, due: '' });
+  Object.assign(qa, { area: 'work', person: '', projectId: '', estimate: 15, priority: 'B', category: 'home', unplanned: true, col: (S.board.columns[0] || {}).id, due: '', heat: 'normal' });
   renderQuickAdd();
 }
 function renderQuickAdd(keepTitle) {
@@ -1225,6 +1273,7 @@ function renderQuickAdd(keepTitle) {
     </div>
     ${qa.area === 'print' ? `
       <div class="field"><span class="lbl">Кто делает</span><div class="chips">${S.board.columns.map((c) => `<button class="chip ${qa.col === c.id ? 'on' : ''}" data-act="qaSet" data-k="col" data-v="${c.id}">${esc(c.name)}</button>`).join('')}</div></div>
+      <div class="field"><span class="lbl">Срочность</span><div class="chips">${Object.entries(L.HEAT).map(([h, v]) => `<button class="chip heatchip ${h} ${(qa.heat || 'normal') === h ? 'on' : ''}" data-act="qaSet" data-k="heat" data-v="${h}"><i class="hdot ${h} on"></i>${v.name}</button>`).join('')}</div></div>
       <div class="row">
         <div class="field"><span class="lbl">Срок</span><input class="input" id="qaDue" type="date" value="${esc(qa.due || '')}"></div>
         <div class="field"><span class="lbl">Проект</span><select class="input" id="qaProject"><option value="">Без проекта</option>${projects.map((p) => `<option value="${p.id}" ${qa.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
@@ -1257,7 +1306,7 @@ function qaSave(mode) {
   const unpl = document.getElementById('qaUnplanned');
   if (qa.area === 'print') {
     if (!columnById(qa.col)) return toast('Сначала добавьте колонку на доске «Печать»');
-    const c = addCard(qa.col, title, document.getElementById('qaDue').value, { projectId: projSel ? projSel.value : '' });
+    const c = addCard(qa.col, title, document.getElementById('qaDue').value, { projectId: projSel ? projSel.value : '', heat: qa.heat || 'normal' });
     closeModal();
     toast(columnById(c.col).name + ': ' + title);
     return commit();
@@ -1399,6 +1448,7 @@ function editProject(id) {
       <div class="field"><label>Этап начат</label><input class="input" id="pStageStart" type="date" value="${p.stageStartedAt || today()}"></div>
     </div>
     ${id ? '' : `<label style="display:flex;gap:8px;margin-bottom:12px"><input type="checkbox" id="pTpl" ${st.autoStageTasks ? 'checked' : ''}> Создать задачи текущего этапа по шаблону</label>`}
+    <div class="field"><label>Светофор</label><select class="input" id="pRag">${[['auto', 'Авто — по прогнозу сроков'], ['red', '🔴 Горит'], ['amber', '🟡 Внимание'], ['green', '🟢 По плану']].map(([k, n]) => `<option value="${k}" ${(p.rag || 'auto') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
     <div class="field"><label>Заметка</label><textarea class="input" id="pNote" placeholder="Ссылка на карточку в Airtable, контакты, особенности клиента…">${esc(p.note)}</textarea></div>
     ${plan ? `<div class="field"><label>План этапов от даты сдачи</label>
       <table class="plan-table"><tr><th>Этап</th><th>Начать</th><th>Закончить</th><th></th></tr>
@@ -1425,7 +1475,7 @@ function saveProject() {
   const name = v('pName').trim();
   if (!name) return document.getElementById('pName').focus();
   const id = v('pId');
-  const fields = { name, client: v('pClient').trim(), deadline: v('pDeadline'), stage: v('pStage'), stageStartedAt: v('pStageStart') || today(), note: v('pNote') };
+  const fields = { name, client: v('pClient').trim(), deadline: v('pDeadline'), stage: v('pStage'), stageStartedAt: v('pStageStart') || today(), note: v('pNote'), rag: v('pRag') };
   if (id) {
     const p = projectById(id);
     if (p.stage !== fields.stage) p.history.push({ stage: fields.stage, at: today() });
@@ -1667,6 +1717,16 @@ const ACTIONS = {
     commit();
   },
   editCard: (el) => editCard(el.dataset.id),
+  setHeat: (el) => {
+    const c = cardById(el.dataset.id);
+    c.heat = el.dataset.h;
+    toast(L.HEAT[c.heat].name + ': ' + c.title);
+    commit();
+  },
+  cardHeatChip: (el) => {
+    document.getElementById('cHeat').value = el.dataset.h;
+    el.parentElement.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === el));
+  },
   saveCard,
   deleteCard: (el) => confirmBox('Удалить дело?', () => {
     S.board.cards = S.board.cards.filter((c) => c.id !== el.dataset.id);
