@@ -97,3 +97,38 @@ test('доска печати: ручной порядок, сортировка
   assert.strictEqual(ids('anvar', 'manual'), 'a');
   assert.strictEqual(ids('aziz', 'manual'), 'cebd');
 });
+
+test('светофор проекта и матрица Эйзенхауэра', () => {
+  const late = { id: 'p1', stage: 'analysis', stageStartedAt: '2026-10-19', deadline: '2026-10-30' };
+  const ok = { id: 'p2', stage: 'print', stageStartedAt: '2026-10-19', deadline: '2026-11-20' };
+  assert.strictEqual(L.ragStatus(late, S, '2026-10-19'), 'red');
+  assert.strictEqual(L.ragStatus(ok, S, '2026-10-19'), 'green');
+  assert.strictEqual(L.ragStatus({ ...ok, rag: 'amber' }, S, '2026-10-19'), 'amber'); // вручную
+  assert.strictEqual(L.ragStatus({ ...ok, closed: true }, S, '2026-10-19'), 'gray');
+  const pm = { p1: late, p2: ok };
+  const q = (t) => L.eisenhower(t, pm, S, '2026-10-19');
+  assert.strictEqual(q({ priority: 'A', due: '2026-10-20' }), 1);
+  assert.strictEqual(q({ priority: 'A', due: '2026-11-10' }), 2);
+  assert.strictEqual(q({ priority: 'B', due: '2026-10-21' }), 3);
+  assert.strictEqual(q({ priority: 'B' }), 4);
+  assert.strictEqual(q({ priority: 'B', projectId: 'p1' }), 2); // «красный» проект делает задачу важной
+  assert.strictEqual(L.dueColor('2026-10-16', S, '2026-10-19'), 'red');
+  assert.strictEqual(L.dueColor('2026-10-21', S, '2026-10-19'), 'amber');
+  assert.strictEqual(L.dueColor('2026-10-30', S, '2026-10-19'), 'green');
+  assert.strictEqual(L.dueColor('', S, '2026-10-19'), 'gray');
+});
+
+test('доска печати: цвет срочности и пауза', () => {
+  const cards = [
+    { id: 'a', col: 'x', order: 0, heat: 'pause' },
+    { id: 'b', col: 'x', order: 1 },
+    { id: 'c', col: 'x', order: 2, heat: 'fire', due: '2026-11-10' },
+    { id: 'd', col: 'x', order: 3, heat: 'urgent', due: '2026-11-01' },
+    { id: 'e', col: 'x', order: 4, heat: 'fire', due: '2026-11-02' },
+  ];
+  const ids = (sort) => L.boardColumn(cards, 'x', sort).map((c) => c.id).join('');
+  assert.strictEqual(ids('manual'), 'bcdea'); // пауза уходит вниз, остальное — как расставили
+  assert.strictEqual(ids('heat'), 'ecdba'); // горит (по сроку) → срочно → в работе → пауза
+  assert.strictEqual(ids('due'), 'decba');
+  assert.strictEqual(L.heatOf({}), 'normal');
+});
