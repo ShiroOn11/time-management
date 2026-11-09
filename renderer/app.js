@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   printFields: null,
   autoStageTasks: true,
   focusMinutes: 25,
+  autoUpdate: true,
   messageWindows: '10:00, 13:00, 16:00, 18:00',
   notifications: true,
 };
@@ -674,6 +675,7 @@ function viewToday() {
       <div class="spacer"></div>
       <button class="btn" data-act="newTask" data-planned="${t}">＋ Задача на сегодня</button>
     </div>
+    ${upd.info && upd.info.available && upd.progress == null ? `<div class="banner upd-banner"><div style="flex:1"><b>Есть новая версия ${esc(upd.info.latest)}</b><div class="hint">Займёт около минуты, задачи сохранятся.</div></div><button class="btn primary" data-act="installNow">⬆︎ Обновить сейчас</button></div>` : ''}
     ${banner}
     <div class="grid-today">
       <div class="col">
@@ -1298,7 +1300,8 @@ function viewSettings() {
           <button class="btn" data-act="checkUpdate">Проверить</button>
           ${upd.info && upd.info.available ? '<button class="btn primary" data-act="installUpdate">Обновить</button>' : ''}
         </div>
-        <div class="hint" style="margin-top:8px">Приложение проверяет обновления при запуске и раз в 6 часов. Задачи и настройки при обновлении сохраняются.</div>
+        <label style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" data-change="autoUpdate" ${st.autoUpdate ? 'checked' : ''}> Устанавливать обновления автоматически при запуске приложения</label>
+        <div class="hint" style="margin-top:8px">Проверка — при запуске, каждые 30 минут и когда вы открываете окно. Задачи и настройки при обновлении сохраняются.</div>
       </div>
       <div class="card"><h2>Прочее</h2>
         <label style="display:flex;gap:8px;margin-bottom:12px"><input type="checkbox" data-change="notifications" ${st.notifications ? 'checked' : ''}> Уведомления: утренний план, напоминания «жду ответа», долгий таймер, конец дня</label>
@@ -1395,10 +1398,10 @@ function updateStatusText() {
   if (!i) return 'Проверяю…';
   if (i.ok && i.available) return 'Доступна новая версия <b>' + esc(i.latest) + '</b>.';
   if (i.ok) return 'Установлена последняя версия.';
-  if (i.reason === 'private') return 'Автообновление недоступно: репозиторий на GitHub закрыт. Сделайте его публичным (Settings → Change visibility).';
+  if (/404/.test(i.reason || '')) return 'Автообновление недоступно: репозиторий на GitHub закрыт. Сделайте его публичным (Settings → Change visibility).';
   if (i.reason === 'offline') return 'Нет интернета — проверю позже.';
   if (i.reason === 'browser') return '';
-  return 'Не удалось проверить обновления.';
+  return 'Не удалось проверить обновления (' + esc(i.reason || '') + '). Попробую снова через 30 минут.';
 }
 function updateBadge() {
   if (upd.progress != null) return `<div class="upd">Обновление… ${upd.progress}%</div>`;
@@ -1407,10 +1410,11 @@ function updateBadge() {
 }
 async function checkUpdate(manual) {
   upd.error = '';
+  upd.checkedAt = nowMs();
   upd.info = await bridge.checkUpdate();
   if (manual && upd.info.ok && !upd.info.available) toast('Установлена последняя версия');
   // не перерисовываем весь экран без нужды — иначе сотрётся текст, который вы вводите
-  if (manual || ui.view === 'settings') render();
+  if (manual || ui.view === 'settings' || (ui.view === 'today' && upd.info && upd.info.available && !modalOpen())) render();
   else renderNav();
 }
 async function installUpdate() {
@@ -2051,6 +2055,7 @@ const ACTIONS = {
   },
   export: () => bridge.exportData(S).then((ok) => ok && toast('Сохранено')),
   checkUpdate: () => checkUpdate(true),
+  installNow: () => installUpdate(),
   installUpdate: () => confirmBox('Скачать и установить новую версию? Приложение перезапустится, задачи сохранятся.', installUpdate),
   import: doImport,
 };
@@ -2093,6 +2098,10 @@ const CHANGES = {
   },
   autoStageTasks: (el) => {
     settings().autoStageTasks = el.checked;
+    commit();
+  },
+  autoUpdate: (el) => {
+    settings().autoUpdate = el.checked;
     commit();
   },
   notifications: (el) => {
@@ -2418,8 +2427,18 @@ async function init() {
     save();
   }
   render();
-  setTimeout(() => checkUpdate(false), 4000);
-  setInterval(() => checkUpdate(false), 6 * 3600000);
+  // При запуске: если есть новая версия и вы ещё не начали работу — ставим сразу, без кнопок.
+  setTimeout(async () => {
+    await checkUpdate(false);
+    if (upd.info && upd.info.available && settings().autoUpdate && !S.timer && !S.focus) {
+      toast('Устанавливаю обновление ' + upd.info.latest + '…');
+      installUpdate();
+    }
+  }, 3000);
+  setInterval(() => checkUpdate(false), 30 * 60000);
+  window.addEventListener('focus', () => {
+    if (!upd.checkedAt || nowMs() - upd.checkedAt > 15 * 60000) checkUpdate(false);
+  });
   setInterval(tick, 1000);
   setInterval(minuteCheck, 30000);
   tick();

@@ -7,6 +7,11 @@ on:
       - 'main.js'
       - '.github/workflows/update-test.yml'
 
+# Одно Mac-задание за раз (см. build-mac.yml).
+concurrency:
+  group: macos-runner
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: macos-latest
@@ -20,28 +25,39 @@ jobs:
 
       - run: npm ci
 
-      - name: Собрать «старую» версию 0.0.1 и установить в /Applications
+      - name: Собрать «старую» версию 0.0.1
         run: |
           npm version 0.0.1 --no-git-tag-version
           npx electron-builder --mac dir --arm64 --publish never
-          ditto "dist/mac-arm64/Time Management.app" "/Applications/Time Management.app"
-          defaults read "/Applications/Time Management.app/Contents/Info" CFBundleShortVersionString
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      - name: Запустить и дождаться самообновления
+      - name: Самообновление — проверка через API и через запасной путь
         run: |
-          TM_UPDATE_SELFTEST=1 "/Applications/Time Management.app/Contents/MacOS/Time Management" > app.log 2>&1 &
-          for i in $(seq 1 60); do
-            sleep 5
-            V=$(defaults read "/Applications/Time Management.app/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "-")
-            echo "через $((i*5)) c: версия $V"
-            if [ "$V" != "0.0.1" ] && [ "$V" != "-" ]; then
-              sleep 10
-              cat app.log
-              pgrep -fl "Time Management.app/Contents/MacOS" && echo "OK: обновилось до $V и перезапустилось" && exit 0
-              echo "обновилось, но не перезапустилось"; exit 1
-            fi
+          APP="/Applications/Time Management.app"
+          for SOURCE in api page; do
+            echo "::group::$SOURCE"
+            pkill -f "Time Management.app/Contents/MacOS" || true
+            rm -rf "$APP"
+            ditto "dist/mac-arm64/Time Management.app" "$APP"
+            if [ "$SOURCE" = page ]; then export TM_UPDATE_FORCE_PAGE=1; else unset TM_UPDATE_FORCE_PAGE; fi
+            TM_UPDATE_SELFTEST=1 "$APP/Contents/MacOS/Time Management" > app.log 2>&1 &
+            OK=0
+            for i in $(seq 1 60); do
+              sleep 5
+              V=$(defaults read "$APP/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "-")
+              if [ "$V" != "0.0.1" ] && [ "$V" != "-" ]; then
+                for j in $(seq 1 10); do
+                  sleep 2
+                  if pgrep -fl "Time Management.app/Contents/MacOS"; then OK=1; break; fi
+                done
+                break
+              fi
+            done
+            echo "--- app.log"; cat app.log
+            echo "--- update.log"; cat ~/Library/Logs/TimeManagement/update.log || true
+            echo "::endgroup::"
+            if [ "$OK" != 1 ]; then echo "FAIL ($SOURCE): версия $V"; exit 1; fi
+            echo "OK ($SOURCE): обновилось до $V и перезапустилось"
+            rm -f ~/Library/Logs/TimeManagement/update.log
           done
-          cat app.log
-          exit 1
