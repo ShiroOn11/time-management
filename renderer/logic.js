@@ -282,6 +282,76 @@
     return { minutes, count };
   }
 
+  // ---------- данные для печати ----------
+  // Шаблон того, что нужно получить от клиента для макета упаковки (из таблицы пользователя).
+  const PRINT_FIELDS = [
+    { group: 'Продукт', items: ['Категория', 'Тип продукта', 'Состав', 'Аллергены', 'Пищевая ценность (на 100 г)', 'Масса / Объём', 'Размер упаковки', 'Вид упаковки', 'Языки упаковки'] },
+    { group: 'Производитель', items: ['Информация о производителе', 'Телефон', 'Веб-сайт', 'Соц. сети', 'Почта', 'Страна производства', 'Место производства (локация)'] },
+    { group: 'Маркировка', items: ['Штрих-код', 'QR-код', 'ГОСТ номер', 'Срок годности', 'Дата изготовления', 'Условия хранения'] },
+    { group: 'Прочее', items: ['Сертификаты', 'Доп. информация', 'Референсы (фото)'] },
+  ];
+
+  // Шаблон в текст для настроек и обратно: «## Группа», дальше по пункту в строке.
+  function printFieldsToText(fields) {
+    return fields.map((g) => '## ' + g.group + '\n' + g.items.join('\n')).join('\n\n');
+  }
+  function printFieldsFromText(text) {
+    const out = [];
+    let cur = null;
+    text.split('\n').map((l) => l.trim()).forEach((line) => {
+      if (!line) return;
+      if (line.startsWith('#')) {
+        cur = { group: line.replace(/^#+\s*/, '') || 'Без группы', items: [] };
+        out.push(cur);
+      } else {
+        if (!cur) out.push((cur = { group: 'Данные', items: [] }));
+        if (!cur.items.includes(line)) cur.items.push(line);
+      }
+    });
+    return out.filter((g) => g.items.length);
+  }
+
+  // Пункт закрыт, если отмечен «получено» или вписано значение; «не нужно» в счёт не идёт.
+  function printFieldState(data, label) {
+    const f = (data && data[label]) || {};
+    if (f.s === 'na') return 'na';
+    if (f.s === 'ok' || (f.v && String(f.v).trim())) return 'ok';
+    return 'missing';
+  }
+  function printDataProgress(data, fields) {
+    let total = 0;
+    let done = 0;
+    const missing = [];
+    fields.forEach((g) => g.items.forEach((label) => {
+      const st = printFieldState(data, label);
+      if (st === 'na') return;
+      total++;
+      if (st === 'ok') done++;
+      else missing.push(label);
+    }));
+    return { total, done, missing };
+  }
+  function clientRequestText(projectName, data, fields) {
+    const lines = [];
+    fields.forEach((g) => {
+      const miss = g.items.filter((label) => printFieldState(data, label) === 'missing');
+      if (miss.length) lines.push(g.group + ':', ...miss.map((m) => '— ' + m), '');
+    });
+    if (!lines.length) return '';
+    const name = !projectName ? '' : /[«"]/.test(projectName) ? ' ' + projectName : ' «' + projectName + '»';
+    return 'Здравствуйте! Для подготовки макета' + name +
+      ' к печати пришлите, пожалуйста:\n\n' + lines.join('\n').trim() + '\n\nСпасибо!';
+  }
+  function designerText(projectName, data, fields) {
+    const out = [(projectName || 'Проект') + ' — данные для макета', ''];
+    fields.forEach((g) => {
+      const rows = g.items.filter((label) => printFieldState(data, label) !== 'na')
+        .map((label) => label + ': ' + (((data && data[label]) || {}).v || '—'));
+      if (rows.length) out.push(g.group.toUpperCase(), ...rows, '');
+    });
+    return out.join('\n').trim();
+  }
+
   // ---------- цвета важности ----------
   // Светофор проекта (RAG): ручной статус, если задан, иначе по прогнозу сроков.
   function ragStatus(project, settings, today) {
@@ -406,7 +476,7 @@
     toISO, parseISO, todayISO, addDays, isWorkday, addWorkdays, snapWorkday, workdaysBetween, weekStart,
     stageDays, planBackward, stageIndex, forecast,
     sessionMinutes, actualMinutes, calibration, realisticMinutes,
-    dayCapacity, dayLoad, unplannedOn, frogScore, fmtMin, plural, boardColumn, moveCard, HEAT, heatOf, ragStatus, eisenhower, dueColor,
+    dayCapacity, dayLoad, unplannedOn, frogScore, fmtMin, plural, boardColumn, moveCard, PRINT_FIELDS, printFieldsToText, printFieldsFromText, printFieldState, printDataProgress, clientRequestText, designerText, HEAT, heatOf, ragStatus, eisenhower, dueColor,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Logic = api;

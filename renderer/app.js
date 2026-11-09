@@ -34,7 +34,10 @@ const DEFAULT_SETTINGS = {
   roundDays: 2,
   stageDays: {},
   templates: null,
+  printFields: null,
   autoStageTasks: true,
+  focusMinutes: 25,
+  messageWindows: '10:00, 13:00, 16:00, 18:00',
   notifications: true,
 };
 
@@ -74,6 +77,8 @@ function fresh() {
     days: {},
     reviews: {},
     board: freshBoard(),
+    focusLog: [],
+    focus: null,
     createdAt: nowMs(),
   };
 }
@@ -103,6 +108,8 @@ const projectById = (id) => S.projects.find((p) => p.id === id);
 const projectsMap = () => Object.fromEntries(S.projects.map((p) => [p.id, p]));
 const dayRec = (iso) => (S.days[iso] = S.days[iso] || {});
 const templates = () => settings().templates || L.TEMPLATES;
+const printFields = () => settings().printFields || L.PRINT_FIELDS;
+const printProgress = (p) => L.printDataProgress(p.printData || {}, printFields());
 const cardById = (id) => S.board.cards.find((c) => c.id === id);
 const columnById = (id) => S.board.columns.find((c) => c.id === id);
 const overdueCards = () => S.board.cards.filter((c) => !c.done && c.due && c.due < today());
@@ -306,6 +313,120 @@ function addRound(id) {
 }
 
 // ============================================================
+// Режим фокуса: одна задача, отсчёт, «парковка» отвлечений
+// ============================================================
+
+function messageWindows() {
+  return (settings().messageWindows || '').split(/[,;\s]+/).filter((x) => /^\d{1,2}:\d{2}$/.test(x)).map(timeToMin).sort((a, b) => a - b);
+}
+function nextMessageWindow() {
+  const nm = nowMin();
+  const w = messageWindows().find((m) => m > nm);
+  return w == null ? '' : Math.floor(w / 60) + ':' + String(w % 60).padStart(2, '0');
+}
+
+function startFocus(id, minutes) {
+  const t = taskById(id);
+  if (!t) return;
+  if (S.focus && !S.focus.break) finishFocus(false, true);
+  startTimer(id);
+  S.focus = { taskId: id, start: nowMs(), minutes: minutes || settings().focusMinutes || 25, parked: [], distractions: 0 };
+  notifyFocusDnd();
+  commit();
+}
+// Завершить блок: записать в журнал, остановить таймер задачи.
+function finishFocus(taskDone, silent) {
+  const f = S.focus;
+  if (!f) return;
+  if (!f.break) {
+    const end = Math.min(nowMs(), f.start + f.minutes * 60000);
+    S.focusLog.push({ taskId: f.taskId, start: f.start, end, minutes: Math.round((end - f.start) / 60000), distractions: f.distractions, parked: f.parked.length });
+    if (S.timer && S.timer.taskId === f.taskId) stopTimer(true);
+    if (taskDone) {
+      const t = taskById(f.taskId);
+      if (t && t.status !== 'done') {
+        t.status = 'done';
+        t.doneAt = nowMs();
+        if (!t.plannedFor) t.plannedFor = today();
+      }
+    }
+  }
+  S.focus = null;
+  if (!silent) commit();
+}
+function startBreak() {
+  const taskId = S.focus && S.focus.taskId;
+  finishFocus(false, true);
+  S.focus = { break: true, taskId, start: nowMs(), minutes: 5, parked: [], distractions: 0 };
+  commit();
+}
+let dndHintShown = false;
+function notifyFocusDnd() {
+  if (dndHintShown) return;
+  dndHintShown = true;
+  toast('Совет: включите «Не беспокоить» на Mac (Пункт управления → Фокусирование), чтобы Telegram молчал');
+}
+
+function renderFocus() {
+  const el = document.getElementById('focus');
+  const f = S.focus;
+  if (!f) {
+    el.innerHTML = '';
+    return;
+  }
+  const t = taskById(f.taskId);
+  if (!f.break && !t) {
+    S.focus = null;
+    el.innerHTML = '';
+    return;
+  }
+  const left = f.start + f.minutes * 60000 - nowMs();
+  const ended = left <= 0;
+  const p = t && t.projectId && projectById(t.projectId);
+  const nextW = nextMessageWindow();
+  const parked = f.parked.map(taskById).filter(Boolean);
+  if (f.break) {
+    el.innerHTML = `<div class="focus-wrap break"><div class="focus-box">
+      <div class="focus-label">☕ Перерыв</div>
+      <div class="focus-clock" id="focusClock">${fmtLeft(left)}</div>
+      <div class="hint">Встаньте, пройдитесь, воды. Не открывайте ленту — мозг не отдохнёт.</div>
+      <div class="focus-acts">
+        ${t ? `<button class="btn frog" data-act="focusAgain" data-id="${t.id}">🎯 Ещё блок: ${esc(t.title)}</button>` : ''}
+        <button class="btn" data-act="focusClose">Закрыть</button>
+      </div></div></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="focus-wrap ${ended ? 'ended' : ''}"><div class="focus-box">
+    <div class="focus-label">🎯 Фокус · ${f.minutes} мин${p ? ' · ' + esc(p.name) : ''}</div>
+    <div class="focus-title">${esc(t.title)}</div>
+    <div class="focus-ring" style="--pct:${Math.min(100, ((nowMs() - f.start) / (f.minutes * 600)))}" id="focusRing"><div class="focus-clock" id="focusClock">${ended ? 'Готово' : fmtLeft(left)}</div></div>
+    ${ended
+      ? `<div class="focus-q">Блок закончен${f.distractions ? ' · отвлекли ' + f.distractions + ' ' + L.plural(f.distractions, 'раз', 'раза', 'раз') : ' без отвлечений 👏'}. Что дальше?</div>
+        <div class="focus-acts">
+          <button class="btn frog" data-act="focusDone">✓ Задача готова</button>
+          <button class="btn primary" data-act="focusAgain" data-id="${t.id}">🎯 Ещё блок</button>
+          <button class="btn" data-act="focusBreak">☕ Перерыв 5 мин</button>
+          <button class="btn ghost" data-act="focusClose">Закрыть</button>
+        </div>`
+      : `<div class="hint" style="margin-bottom:10px">${nextW ? 'Сообщения — в ' + nextW + '. До тех пор только эта задача.' : 'Только эта задача. Всё остальное — в «парковку» ниже.'}</div>
+        <form class="focus-park" data-park="1"><input class="input" name="title" placeholder="Пришла мысль или просьба? Запишите и вернитесь к задаче ⏎" autocomplete="off"></form>
+        ${parked.length ? `<div class="focus-parked">${parked.map((x) => `<div>· ${esc(x.title)}</div>`).join('')}</div>` : ''}
+        <div class="focus-acts">
+          <button class="btn frog" data-act="focusDone">✓ Задача готова</button>
+          <button class="btn" data-act="focusStop">■ Прервать</button>
+        </div>`}
+  </div></div>`;
+  if (!ended) {
+    const inp = el.querySelector('[data-park] input');
+    if (inp && !modalOpen()) setTimeout(() => inp.focus(), 30);
+  }
+}
+function fmtLeft(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+// ============================================================
 // Отрисовка
 // ============================================================
 
@@ -323,6 +444,7 @@ const VIEWS = [
 function render() {
   renderNav();
   renderTimerBar();
+  renderFocus();
   const v = document.getElementById('view');
   const scroll = v.scrollTop;
   const fn = { today: viewToday, tasks: viewTasks, projects: viewProjects, week: viewWeek, print: viewPrint, review: viewReview, guide: viewGuide, settings: viewSettings }[ui.view];
@@ -371,6 +493,7 @@ function renderTimerBar() {
   el.innerHTML = `<div class="timer-bar">
     <span>⏱</span><span class="time" id="timerClock">${fmtClock(nowMs() - (open ? open.start : nowMs()))}</span>
     <span class="name">${esc(t.title)}${t.estimate ? ' · оценка ' + L.fmtMin(t.estimate) : ''}</span>
+    ${S.focus && !S.focus.break ? '' : `<button data-act="focus" data-id="${t.id}">🎯 Фокус</button>`}
     <button data-act="stopTimer">■ Стоп</button>
     <button data-act="doneTimer">✓ Готово</button></div>`;
 }
@@ -422,6 +545,7 @@ function taskRow(t, opts = {}) {
       ${t.status !== 'done' ? (running
         ? `<button class="icon-btn stop" data-act="stopTimer" title="Остановить">■</button>`
         : `<button class="icon-btn play" data-act="startTimer" data-id="${t.id}" title="Начать (таймер)">▶</button>`) : ''}
+      ${t.status !== 'done' ? `<button class="icon-btn" data-act="focus" data-id="${t.id}" title="Фокус: только эта задача">🎯</button>` : ''}
     </div>
   </div>`;
 }
@@ -489,6 +613,10 @@ function viewToday() {
     .slice(0, 6);
   const inboxCount = S.tasks.filter((x) => x.status === 'inbox').length;
   const tomorrow = L.addWorkdays(t, 1, st.workdays);
+  const missingData = S.projects
+    .filter((p) => !p.closed && ['presentation', 'print'].includes(p.stage))
+    .map((p) => ({ p, pr: printProgress(p) }))
+    .filter((x) => x.pr.missing.length);
   const printSoon = S.board.cards
     .filter((c) => !c.done && (L.heatOf(c) === 'fire' || (c.due && c.due <= tomorrow && L.heatOf(c) !== 'pause')))
     .sort((a, b) => L.HEAT[L.heatOf(a)].rank - L.HEAT[L.heatOf(b)].rank || (a.due || '9').localeCompare(b.due || '9'));
@@ -525,7 +653,7 @@ function viewToday() {
           </div>
           <div class="actions">
             ${frog.status === 'done' ? '<span class="hint">Съедена ✓ — дальше всё проще</span>' : `
-              ${S.timer && S.timer.taskId === frog.id ? '<button class="btn" data-act="stopTimer">■ Пауза</button>' : `<button class="btn frog" data-act="startTimer" data-id="${frog.id}">▶ Начать</button>`}
+              ${S.timer && S.timer.taskId === frog.id ? '<button class="btn" data-act="stopTimer">■ Пауза</button>' : `<button class="btn frog" data-act="focus" data-id="${frog.id}">🎯 Фокус</button><button class="btn" data-act="startTimer" data-id="${frog.id}">▶ Таймер</button>`}
               <button class="btn" data-act="toggleDone" data-id="${frog.id}">✓ Сделано</button>`}
           </div>
         </div></div>`
@@ -565,6 +693,7 @@ function viewToday() {
             ${unplannedToday.map((x) => taskRow(x, { showPlanned: true })).join('')}`
             : '<div class="empty">Звонок, просьба дизайнера, правка от клиента — жмите ⌥⌘N и записывайте. Через неделю увидите, сколько времени это съедает на самом деле.</div>'}
         </div>
+        ${doneTodayCard(t)}
       </div>
       <div class="col side">
         <div class="card">
@@ -583,6 +712,10 @@ function viewToday() {
         </div>` : ''}
         ${printSoon.length ? `<div class="card"><h2>Печать · горит и сроки <span class="right"><a href="#" data-act="go" data-v="print">доска →</a></span></h2>
           ${printSoon.map((c) => cardRow(c)).join('')}</div>` : ''}
+        ${missingData.length ? `<div class="card"><h2>📋 Не хватает данных к печати</h2>
+          ${missingData.map(({ p, pr }) => `<div class="task"><div class="body" data-act="printData" data-id="${p.id}"><div class="title">${esc(p.name)}</div>
+            <div class="meta"><span class="tag late">не хватает ${pr.missing.length}</span><span class="tag">${esc(pr.missing.slice(0, 3).join(', '))}${pr.missing.length > 3 ? '…' : ''}</span></div></div></div>`).join('')}
+        </div>` : ''}
         ${risky.length ? `<div class="card"><h2>Проекты: горят и требуют внимания</h2>
           ${risky.map(({ p, f, rag }) => `<div class="task"><div class="body" data-act="openProject" data-id="${p.id}">
             <div class="title"><i class="rag-dot ${rag}"></i>${esc(p.name)}</div>
@@ -594,6 +727,40 @@ function viewToday() {
       </div>
     </div>`;
 }
+// Всё, что сделано за день: план, внезапное, печать, фокус. Чтобы было видно, что день не пустой.
+function doneToday(iso) {
+  const sameDay = (ms) => ms && L.toISO(new Date(ms)) === iso;
+  const tasks = S.tasks.filter((x) => x.status === 'done' && sameDay(x.doneAt));
+  const cards = S.board.cards.filter((c) => c.done && sameDay(c.doneAt));
+  const blocks = S.focusLog.filter((b) => sameDay(b.start));
+  return {
+    tasks,
+    cards,
+    planned: tasks.filter((x) => !x.unplanned).length,
+    unplanned: tasks.filter((x) => x.unplanned).length,
+    focusBlocks: blocks.length,
+    focusMin: blocks.reduce((n, b) => n + b.minutes, 0),
+    distractions: blocks.reduce((n, b) => n + b.distractions, 0),
+    tracked: S.tasks.reduce((n, x) => n + minutesOnDay(x, iso), 0),
+  };
+}
+function doneTodayCard(t) {
+  const d = doneToday(t);
+  const total = d.tasks.length + d.cards.length;
+  return `<div class="card done-card"><h2>✓ Сделано сегодня <span class="right">${total}</span></h2>
+    <div class="done-stats">
+      <div><b>${d.planned}</b><span>из плана</span></div>
+      <div><b>${d.unplanned}</b><span>внезапных</span></div>
+      <div><b>${d.cards.length}</b><span>по печати</span></div>
+      <div><b>${d.focusBlocks}</b><span>блоков фокуса · ${L.fmtMin(d.focusMin)}</span></div>
+      <div><b>${L.fmtMin(d.tracked)}</b><span>в работе по таймеру</span></div>
+    </div>
+    ${total ? `<div class="done-list">${d.tasks.map((x) => `<div>✓ ${esc(x.title)}${x.unplanned ? ' <span class="tag unplanned">внезапно</span>' : ''}</div>`).join('')}${d.cards.map((c) => `<div>✓ ${esc(c.title)} <span class="tag person">${esc((columnById(c.col) || {}).name || 'Печать')}</span></div>`).join('')}</div>`
+      : '<div class="empty">Отмечайте ✓ всё, что закрыли, даже мелочи и ответы на просьбы. Вечером здесь будет видно, на что ушёл день.</div>'}
+    ${d.distractions ? `<div class="hint" style="margin-top:8px">В фокусе вас отвлекли ${d.distractions} ${L.plural(d.distractions, 'раз', 'раза', 'раз')} — всё записано во «Входящие».</div>` : ''}
+  </div>`;
+}
+
 function unplanBtn(t) {
   return t.status !== 'done' ? `<button class="icon-btn" data-act="toTomorrow" data-id="${t.id}" title="На завтра">→</button>` : '';
 }
@@ -735,6 +902,11 @@ function projectCard(p, f) {
       ${!p.closed && f.end && f.slack != null ? `<dt>Прогноз сдачи</dt><dd>${fmtDate(f.end, true)}</dd>` : ''}
       <dt>Задачи / время</dt><dd>${open} открыто · ${L.fmtMin(spent)}</dd>
       ${totalRounds ? `<dt>Круги правок</dt><dd>${rounds ? 'на этапе: ' + rounds + ' · ' : ''}всего ${totalRounds}</dd>` : ''}
+      <dt>Данные к печати</dt><dd>${(() => {
+        const pr = printProgress(p);
+        const cls = pr.done === pr.total ? 'project' : ['presentation', 'print'].includes(p.stage) && !p.closed ? 'late' : 'warn';
+        return `<a href="#" class="tag ${cls}" data-act="printData" data-id="${p.id}">📋 ${pr.done} из ${pr.total}</a>`;
+      })()}</dd>
     </dl>
     <div class="foot">
       ${p.closed ? '' : `<button class="btn primary sm" data-act="advance" data-id="${p.id}">${nextName ? '→ ' + nextName : '✓ Закрыть проект'}</button>
@@ -1108,6 +1280,18 @@ function viewSettings() {
           <textarea class="input" rows="${(tpl[s.id] || []).length + 1}" data-change="template" data-k="${s.id}">${esc((tpl[s.id] || []).map((r) => r.join(' | ')).join('\n'))}</textarea></div>`).join('')}
         <div class="hint">Типы: ${Object.entries(L.TYPES).map(([k, v]) => k + ' — ' + v).join(', ')}. <a href="#" data-act="resetTemplates">Вернуть стандартные</a></div>
       </div>
+      <div class="card"><h2>Фокус и сообщения</h2>
+        <div class="row">
+          <div class="field" style="max-width:200px"><label>Длина блока фокуса</label><select class="input" data-change="set" data-k="focusMinutes" data-num="1">${[25, 45, 50, 90].map((m) => `<option value="${m}" ${st.focusMinutes === m ? 'selected' : ''}>${m} минут</option>`).join('')}</select></div>
+          <div class="field"><label>Окна для сообщений (через запятую)</label><input class="input" value="${esc(st.messageWindows || '')}" data-change="set" data-k="messageWindows" placeholder="10:00, 13:00, 16:00, 18:00"></div>
+        </div>
+        <div class="hint">В эти минуты придёт напоминание ответить в Telegram пачкой. Между ними — фокус. Включите на Mac «Не беспокоить» (Пункт управления → Фокусирование) и разрешите в нём только звонки от избранных.</div>
+      </div>
+      <div class="card"><h2>Данные к печати — шаблон</h2>
+        <div class="field"><label>«## Группа», дальше по одному пункту в строке</label>
+          <textarea class="input" rows="14" data-change="printFieldsTpl">${esc(L.printFieldsToText(printFields()))}</textarea></div>
+        <div class="hint">Пункты появятся в «📋 Данные к печати» у каждого проекта. Уже введённые значения сохраняются, если название пункта не менять. <a href="#" data-act="resetPrintFields">Вернуть стандартные</a></div>
+      </div>
       <div class="card"><h2>Обновления</h2>
         <div style="display:flex;gap:12px;align-items:center">
           <div style="flex:1">Версия <b>${esc(upd.version || '—')}</b>. ${updateStatusText()}</div>
@@ -1166,6 +1350,12 @@ function viewGuide() {
             <dt>Цвета</dt><dd>«Печать»: 🔴 горит, 🟠 срочно, 🟢 в работе, ⚪ на паузе — ставите сами точками на карточке. Проекты — светофор по прогнозу сроков (можно вручную). Задачи — матрица Эйзенхауэра: «Задачи → Матрица».</dd>
             <dt>Хвосты</dt><dd>Задачи из плана прошлых дней, которые не сделаны. Перенесите на сегодня или снимите с плана.</dd>
           </dl>
+        </div>
+        <div class="card"><h2>🎯 Фокус: когда всё отвлекает</h2>
+          <div class="g-b">Нажмите <b>🎯</b> у задачи: экран покажет только её и отсчёт (25 мин, меняется в Настройках). Пришла мысль или просьба — впишите в строку «парковки» и Enter: она уйдёт во «Входящие», а вы останетесь в задаче. Отвечать в Telegram — в <b>окна для сообщений</b> (по умолчанию 10:00, 13:00, 16:00, 18:00), приложение напомнит. Внизу «Сегодня» — <b>«Сделано сегодня»</b>: всё, что закрыли, включая внезапное и печать.</div>
+        </div>
+        <div class="card"><h2>📋 Данные к печати</h2>
+          <div class="g-b">В карточке проекта — «📋 N из 25»: состав, аллергены, штрих-код, ГОСТ, контакты производителя и т.д. Вписывайте значения или отмечайте ✓. Кнопка <b>«Скопировать запрос клиенту»</b> соберёт готовое сообщение со всем, чего не хватает, — вставьте в Telegram. «Скопировать для дизайнера» — все данные одним текстом.</div>
         </div>
         <div class="card"><h2>Печать · кто что делает</h2>
           <div class="g-b">На экране <b>«Печать»</b> — колонки по людям (Азиз ака, Анвар ака, Я; можно добавить свои). Впишите дело в колонку и срок → Enter. <b>Тащите карточку вверх</b> — важнее, <b>в другую колонку</b> — передать другому. «По сроку» сортирует сам. Просроченное подсвечивается красным, а сроки на сегодня-завтра видны на «Сегодня» и в «Неделе». Быстро добавить с любого экрана: ⌥⌘N → «Печать».</div>
@@ -1250,6 +1440,10 @@ function openModal(html, wide) {
   if (first) setTimeout(() => first.focus(), 20);
 }
 function closeModal() {
+  if (document.getElementById('pdId')) {
+    collectPrintData();
+    save();
+  }
   document.getElementById('modal').innerHTML = '';
 }
 const modalOpen = () => !!document.getElementById('modal').innerHTML;
@@ -1324,6 +1518,7 @@ function qaSave(mode) {
     plannedFor: mode === 'inbox' ? '' : today(),
   });
   closeModal();
+  if (S.focus && !S.focus.break) S.focus.distractions++;
   if (mode === 'now') return startTimer(t.id);
   if (mode === 'done') {
     const m = Number(document.getElementById('qaDoneMin').value) || qa.estimate;
@@ -1436,7 +1631,7 @@ function editProject(id) {
   const f = id ? L.forecast(p, st) : null;
   const tasks = id ? S.tasks.filter((x) => x.projectId === id).sort(byOrder) : [];
   openModal(`
-    <h3>${id ? esc(p.name) : 'Новый проект'}</h3>
+    <h3>${id ? esc(p.name) : 'Новый проект'}${id ? ` <button class="btn sm" data-act="printData" data-id="${id}" style="float:right">📋 Данные к печати · ${printProgress(p).done}/${printProgress(p).total}</button>` : ''}</h3>
     <input type="hidden" id="pId" value="${id || ''}">
     <div class="row">
       <div class="field"><label>Название</label><input class="input" id="pName" value="${esc(p.name)}" autofocus></div>
@@ -1499,6 +1694,68 @@ function waitClient(id) {
     <div class="field"><label>Напомнить клиенту</label><input class="input" id="wRemind" type="date" value="${L.addWorkdays(today(), 2, settings().workdays)}"></div>
     <div class="hint">Задержки клиента — главная причина сдвига сроков. Здесь видно, сколько дней проект стоит не по вашей вине.</div>
     <div class="foot"><button class="btn" data-act="closeModal">Отмена</button><button class="btn primary" data-act="saveWait">Сохранить</button></div>`);
+}
+
+// ---------- данные к печати ----------
+
+function printDataModal(id) {
+  const p = projectById(id);
+  const data = p.printData || {};
+  const pr = printProgress(p);
+  const LONG = ['Состав', 'Пищевая ценность (на 100 г)', 'Информация о производителе', 'Доп. информация', 'Условия хранения'];
+  openModal(`
+    <h3>📋 Данные к печати · ${esc(p.name)}</h3>
+    <input type="hidden" id="pdId" value="${id}">
+    <div class="pd-top">
+      <div style="flex:1"><div class="bar"><span class="${pr.done === pr.total ? '' : 'personal'}" style="width:${pr.total ? (pr.done / pr.total) * 100 : 100}%"></span></div>
+        <div class="mini" style="margin-top:4px">Получено <b>${pr.done}</b> из ${pr.total}${pr.missing.length ? ' · не хватает: ' + pr.missing.length : ' · всё собрано ✓'}</div></div>
+      <button class="btn" data-act="copyClientRequest" ${pr.missing.length ? '' : 'disabled'}>✉︎ Скопировать запрос клиенту</button>
+      <button class="btn" data-act="copyDesigner">Скопировать для дизайнера</button>
+    </div>
+    ${printFields().map((g) => `<div class="pd-group"><div class="pd-gname">${esc(g.group)}</div>
+      ${g.items.map((label) => {
+        const f = data[label] || {};
+        const st = L.printFieldState(data, label);
+        const input = LONG.includes(label)
+          ? `<textarea class="input pd-val" rows="2" data-pd="${esc(label)}" placeholder="—">${esc(f.v || '')}</textarea>`
+          : `<input class="input pd-val" data-pd="${esc(label)}" value="${esc(f.v || '')}" placeholder="—">`;
+        return `<div class="pd-row ${st}">
+          <div class="pd-label">${esc(label)}</div>${input}
+          <div class="seg pd-seg">
+            <button class="${st === 'ok' ? 'on' : ''}" data-act="pdState" data-l="${esc(label)}" data-s="ok" title="Получено">✓</button>
+            <button class="${st === 'na' ? 'on' : ''}" data-act="pdState" data-l="${esc(label)}" data-s="na" title="Для этого проекта не нужно">не нужно</button>
+          </div></div>`;
+      }).join('')}</div>`).join('')}
+    <div class="foot"><span class="left hint">Значение можно вписать или просто отметить ✓, если получено файлом. Шаблон пунктов меняется в Настройках.</span>
+      <button class="btn primary" data-act="savePrintData">Готово</button></div>`, true);
+}
+// Собрать значения из формы в проект (вызывается перед любым действием в окне).
+function collectPrintData() {
+  const idEl = document.getElementById('pdId');
+  if (!idEl) return null;
+  const p = projectById(idEl.value);
+  p.printData = p.printData || {};
+  document.querySelectorAll('[data-pd]').forEach((el) => {
+    const label = el.dataset.pd;
+    const f = (p.printData[label] = p.printData[label] || {});
+    f.v = el.value;
+  });
+  return p;
+}
+function copyText(text) {
+  const done = () => toast('Скопировано — вставьте в Telegram (⌘V)');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  }
+  fallbackCopy(text, done);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { toast('Не удалось скопировать'); }
+  ta.remove();
 }
 
 function confirmBox(text, onYes) {
@@ -1629,7 +1886,10 @@ const ACTIONS = {
     const p = projectById(el.dataset.id);
     const idx = L.stageIndex(p.stage);
     const open = S.tasks.filter((x) => x.projectId === p.id && x.stage === p.stage && x.status !== 'done').length;
-    const msg = idx === L.STAGES.length - 1 ? 'Закрыть проект «' + p.name + '»?' : 'Перевести «' + p.name + '» на этап «' + L.STAGES[idx + 1].name + '»?' + (open ? ' Незакрытых задач этапа: ' + open + '.' : '');
+    const pr = printProgress(p);
+    const toPrint = idx < L.STAGES.length - 1 && L.STAGES[idx + 1].id === 'print';
+    const msg = idx === L.STAGES.length - 1 ? 'Закрыть проект «' + p.name + '»?' : 'Перевести «' + p.name + '» на этап «' + L.STAGES[idx + 1].name + '»?' + (open ? ' Незакрытых задач этапа: ' + open + '.' : '')
+      + (toPrint && pr.missing.length ? ' Данных к печати не хватает: ' + pr.missing.length + ' — запрос клиенту можно скопировать в «📋 Данные к печати».' : '');
     confirmBox(msg, () => advanceStage(p.id));
   },
   addRound: (el) => addRound(el.dataset.id),
@@ -1689,6 +1949,10 @@ const ACTIONS = {
     settings().reactiveShare = Number(el.dataset.v);
     commit();
   },
+  resetPrintFields: () => {
+    settings().printFields = null;
+    commit();
+  },
   resetTemplates: () => {
     settings().templates = null;
     commit();
@@ -1717,6 +1981,43 @@ const ACTIONS = {
     commit();
   },
   editCard: (el) => editCard(el.dataset.id),
+  focus: (el) => startFocus(el.dataset.id),
+  focusAgain: (el) => startFocus(el.dataset.id),
+  focusDone: () => {
+    finishFocus(true);
+    toast('Готово ✓');
+  },
+  focusStop: () => confirmBox('Прервать фокус? Время до этого момента сохранится.', () => finishFocus(false)),
+  focusBreak: () => startBreak(),
+  focusClose: () => finishFocus(false),
+  printData: (el) => {
+    collectPrintData();
+    printDataModal(el.dataset.id);
+  },
+  pdState: (el) => {
+    const p = collectPrintData();
+    const f = (p.printData[el.dataset.l] = p.printData[el.dataset.l] || {});
+    f.s = f.s === el.dataset.s ? '' : el.dataset.s;
+    save();
+    const scroll = document.querySelector('.modal').scrollTop;
+    printDataModal(p.id);
+    document.querySelector('.modal').scrollTop = scroll;
+  },
+  savePrintData: () => {
+    collectPrintData();
+    closeModal();
+    commit();
+  },
+  copyClientRequest: () => {
+    const p = collectPrintData();
+    save();
+    copyText(L.clientRequestText(p.name, p.printData, printFields()));
+  },
+  copyDesigner: () => {
+    const p = collectPrintData();
+    save();
+    copyText(L.designerText(p.name, p.printData, printFields()));
+  },
   setHeat: (el) => {
     const c = cardById(el.dataset.id);
     c.heat = el.dataset.h;
@@ -1817,6 +2118,11 @@ const CHANGES = {
     S.reviews[el.dataset.w].note = el.value;
     save();
   },
+  printFieldsTpl: (el) => {
+    const f = L.printFieldsFromText(el.value);
+    settings().printFields = f.length ? f : null;
+    commit();
+  },
   boardShowDone: (el) => {
     S.board.showDone = el.checked;
     commit();
@@ -1839,6 +2145,19 @@ document.addEventListener('change', (e) => {
   if (el && CHANGES[el.dataset.change]) CHANGES[el.dataset.change](el, e);
 });
 document.addEventListener('submit', (e) => {
+  const park = e.target.closest('[data-park]');
+  if (park) {
+    e.preventDefault();
+    const title = park.elements.title.value.trim();
+    if (!title || !S.focus) return;
+    const t = newTask({ title, status: 'inbox', unplanned: true });
+    S.focus.parked.push(t.id);
+    S.focus.distractions++;
+    save();
+    renderFocus();
+    renderNav();
+    return;
+  }
   const form = e.target.closest('[data-addcard]');
   if (!form) return;
   e.preventDefault();
@@ -1964,6 +2283,20 @@ document.addEventListener('drop', (e) => {
 let lastTray = null;
 function tick() {
   let title = '';
+  if (S.focus) {
+    const left = S.focus.start + S.focus.minutes * 60000 - nowMs();
+    const clock = document.getElementById('focusClock');
+    if (left > 0 && clock) clock.textContent = fmtLeft(left);
+    const ring = document.getElementById('focusRing');
+    if (ring) ring.style.setProperty('--pct', Math.min(100, (nowMs() - S.focus.start) / (S.focus.minutes * 600)));
+    if (left <= 0 && !S.focus.endedNotified) {
+      S.focus.endedNotified = true;
+      notify(S.focus.break ? 'Перерыв закончен' : 'Блок фокуса закончен', S.focus.break ? 'Возвращайтесь к задаче.' : 'Отметьте результат: готово, ещё блок или перерыв.');
+      if (!S.focus.break && S.timer && S.timer.taskId === S.focus.taskId) stopTimer(true);
+      save();
+      renderFocus();
+    }
+  }
   if (S.timer) {
     const t = taskById(S.timer.taskId);
     const open = t && t.sessions.find((s) => !s.end);
@@ -1974,6 +2307,7 @@ function tick() {
       const m = Math.floor(ms / 60000);
       const name = t.title.length > 22 ? t.title.slice(0, 21) + '…' : t.title;
       title = ' ' + Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0') + ' ' + name;
+      if (S.focus && !S.focus.break) title = ' 🎯 ' + fmtLeft(S.focus.start + S.focus.minutes * 60000 - nowMs()).replace(/:\d\d$/, ' мин') + ' ' + name;
       if (ms > 2 * 3600000 && !lastNotified['long:' + open.start]) {
         lastNotified['long:' + open.start] = true;
         notify('Таймер идёт больше 2 часов', '«' + t.title + '» — вы всё ещё над этим работаете?');
@@ -2021,6 +2355,13 @@ function minuteCheck() {
       once('print', () => notify('Печать: сроки сегодня', pc.slice(0, 3).map((c) => ((columnById(c.col) || {}).name || '') + ' — ' + c.title).join('\n')));
     }
   }
+  if (isWork) {
+    messageWindows().forEach((w) => {
+      if (nm >= w && nm < w + 20) {
+        once('mw' + w, () => notify('Окно для сообщений · 15 минут', 'Ответьте в Telegram пачкой, потом снова одна задача.'));
+      }
+    });
+  }
   if (isWork && nm >= timeToMin(st.workEnd) && !rec.eveningDone) {
     once('evening', () => notify('Конец рабочего дня', 'Перенесите незавершённое на завтра и закройте день — голова освободится.'));
   }
@@ -2038,6 +2379,8 @@ function normalize(data) {
   d.projects = (d.projects || []).map((p) => ({ history: [], rounds: {}, ...p }));
   d.days = d.days || {};
   d.reviews = d.reviews || {};
+  d.focusLog = d.focusLog || [];
+  d.focus = d.focus || null;
   d.board = { ...freshBoard(), ...(data.board || {}) };
   d.board.cards = (d.board.cards || []).map((c, i) => ({ order: i, note: '', projectId: '', ...c }));
   return d;

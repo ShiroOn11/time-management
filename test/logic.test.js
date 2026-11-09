@@ -132,3 +132,17 @@ test('доска печати: цвет срочности и пауза', () =>
   assert.strictEqual(ids('due'), 'decba');
   assert.strictEqual(L.heatOf({}), 'normal');
 });
+
+test('данные для печати: прогресс, запрос клиенту, шаблон', () => {
+  const F = [{ group: 'Продукт', items: ['Состав', 'Аллергены', 'Масса'] }, { group: 'Маркировка', items: ['Штрих-код'] }];
+  const data = { 'Состав': { v: 'вода, сахар' }, 'Аллергены': { s: 'na' }, 'Штрих-код': { s: 'ok' } };
+  assert.deepStrictEqual(L.printDataProgress(data, F), { total: 3, done: 2, missing: ['Масса'] });
+  const req = L.clientRequestText('Чай', data, F);
+  assert.ok(req.includes('«Чай»') && req.includes('— Масса') && !req.includes('Состав') && !req.includes('Маркировка'));
+  assert.strictEqual(L.clientRequestText('Чай', { ...data, 'Масса': { v: '100 г' } }, F), '');
+  const des = L.designerText('Чай', data, F);
+  assert.ok(des.includes('Состав: вода, сахар') && des.includes('Масса: —') && !des.includes('Аллергены'));
+  const txt = L.printFieldsToText(F);
+  assert.deepStrictEqual(L.printFieldsFromText(txt), F);
+  assert.strictEqual(L.PRINT_FIELDS.reduce((n, g) => n + g.items.length, 0), 25);
+});
