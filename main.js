@@ -208,22 +208,53 @@ function newer(a, b) {
   return false;
 }
 
+// Последняя версия через API GitHub (лимит: 60 запросов в час с одного адреса — в офисе кончается).
+async function latestFromApi() {
+  const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'time-management-app' },
+  });
+  if (!res.ok) throw new Error('http ' + res.status);
+  const rel = await res.json();
+  const asset = (rel.assets || []).find((a) => a.name.endsWith('.dmg'));
+  const m = asset && asset.name.match(/(\d+\.\d+\.\d+)/);
+  if (!m) throw new Error('noasset');
+  return { latest: m[1], url: asset.browser_download_url };
+}
+
+// Запасной путь без лимита: страница releases/latest перенаправляет на тег build-N,
+// а сборка N всегда публикуется как версия 0.2.N (см. build-mac.yml).
+async function latestFromPage() {
+  // net.fetch не сообщает адрес после перенаправления, поэтому ловим его через net.request.
+  const tagUrl = await new Promise((resolve, reject) => {
+    const req = net.request({ url: `https://github.com/${REPO}/releases/latest`, redirect: 'manual' });
+    req.setHeader('User-Agent', 'time-management-app');
+    req.on('redirect', (_status, _method, redirectUrl) => {
+      resolve(redirectUrl);
+      req.abort();
+    });
+    req.on('response', (res) => reject(new Error('noredirect ' + res.statusCode)));
+    req.on('error', reject);
+    req.end();
+  });
+  const m = tagUrl.match(/\/releases\/tag\/build-(\d+)/);
+  if (!m) throw new Error('notag');
+  const v = '0.2.' + m[1];
+  return { latest: v, url: `https://github.com/${REPO}/releases/download/build-${m[1]}/Time-Management-${v}-mac.dmg` };
+}
+
 async function checkUpdate() {
   const current = app.getVersion();
-  try {
-    const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'time-management-app' },
-    });
-    if (res.status === 404) return { ok: false, current, reason: 'private' };
-    if (!res.ok) return { ok: false, current, reason: 'http ' + res.status };
-    const rel = await res.json();
-    const asset = (rel.assets || []).find((a) => a.name.endsWith('.dmg'));
-    const m = asset && asset.name.match(/(\d+\.\d+\.\d+)/);
-    if (!m) return { ok: false, current, reason: 'noasset' };
-    return { ok: true, current, latest: m[1], available: newer(m[1], current), url: asset.browser_download_url, size: asset.size };
-  } catch (e) {
-    return { ok: false, current, reason: 'offline' };
+  const sources = process.env.TM_UPDATE_FORCE_PAGE ? [latestFromPage] : [latestFromApi, latestFromPage];
+  let reason = 'offline';
+  for (const src of sources) {
+    try {
+      const r = await src();
+      return { ok: true, current, latest: r.latest, available: newer(r.latest, current), url: r.url };
+    } catch (e) {
+      reason = e.message || 'offline';
+    }
   }
+  return { ok: false, current, reason };
 }
 
 function run(cmd, args) {

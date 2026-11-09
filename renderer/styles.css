@@ -527,3 +527,7 @@ textarea.input { resize: vertical; min-height: 64px; }
 .done-stats span { font-size: 11px; color: var(--muted); }
 .done-list { display: flex; flex-direction: column; gap: 3px; font-size: 13px; max-height: 220px; overflow: auto; }
 .done-list div { color: var(--text); opacity: .85; }
+
+.banner.upd-banner { background: var(--accent); color: #fff; }
+.banner.upd-banner .hint { color: rgba(255, 255, 255, .8); }
+.banner.upd-banner .btn.primary { background: #fff; color: var(--accent); border-color: #fff; }

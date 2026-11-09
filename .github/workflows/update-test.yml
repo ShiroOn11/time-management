@@ -10,6 +10,10 @@ on:
 jobs:
   update:
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [api, page]
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +35,7 @@ jobs:
 
       - name: Запустить и дождаться самообновления
         run: |
+          if [ "${{ matrix.source }}" = page ]; then export TM_UPDATE_FORCE_PAGE=1; fi
           TM_UPDATE_SELFTEST=1 "/Applications/Time Management.app/Contents/MacOS/Time Management" > app.log 2>&1 &
           for i in $(seq 1 60); do
             sleep 5
