@@ -289,18 +289,29 @@ async function installUpdate(url) {
   const src = fs.readdirSync(mnt).find((f) => f.endsWith('.app'));
   if (!src) throw new Error('В обновлении нет приложения');
   // Скрипт ждёт выхода приложения, заменяет его новой версией и запускает снова.
+  // Всё, что он делает, пишется в ~/Library/Logs/TimeManagement/update.log.
+  const logDir = path.join(os.homedir(), 'Library', 'Logs', 'TimeManagement');
+  fs.mkdirSync(logDir, { recursive: true });
+  const exe = path.join(bundle, 'Contents', 'MacOS', path.basename(app.getPath('exe')));
   const script = path.join(dir, 'install.sh');
   fs.writeFileSync(script, [
     '#!/bin/bash',
+    `exec >> "${path.join(logDir, 'update.log')}" 2>&1`,
+    'echo "=== $(date) обновление"',
+    'set -x',
     `while kill -0 ${process.pid} 2>/dev/null; do sleep 0.3; done`,
     `rm -rf "${bundle}.new"`,
     `if ditto "${path.join(mnt, src)}" "${bundle}.new"; then`,
     `  rm -rf "${bundle}" && mv "${bundle}.new" "${bundle}"`,
     'fi',
     `xattr -cr "${bundle}"`,
-    `hdiutil detach "${mnt}" -quiet`,
-    `open "${bundle}"`,
+    // Запуск: через LaunchServices, а если не вышло — напрямую.
+    `for i in 1 2 3; do open "${bundle}" && break; sleep 2; done`,
+    'sleep 4',
+    `pgrep -f "${exe}" >/dev/null || (nohup "${exe}" >/dev/null 2>&1 &)`,
+    `hdiutil detach "${mnt}" -force -quiet`,
     `rm -rf "${dir}"`,
+    'echo "=== готово"',
   ].join('\n'));
   fs.chmodSync(script, 0o755);
   spawn('/bin/bash', [script], { detached: true, stdio: 'ignore' }).unref();

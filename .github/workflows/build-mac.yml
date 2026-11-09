@@ -16,6 +16,12 @@ on:
 permissions:
   contents: write
 
+# GitHub сейчас даёт этому аккаунту только одно задание на Mac одновременно,
+# а лишние сразу роняет. Поэтому все Mac-задания идут по очереди.
+concurrency:
+  group: macos-runner
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-latest
