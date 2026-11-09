@@ -299,6 +299,8 @@ async function installUpdate(url) {
     `exec >> "${path.join(logDir, 'update.log')}" 2>&1`,
     'echo "=== $(date) обновление"',
     'set -x',
+    // Перезапущенное приложение не должно унаследовать служебные переменные самопроверки.
+    'unset TM_UPDATE_SELFTEST TM_UPDATE_FORCE_PAGE',
     `while kill -0 ${process.pid} 2>/dev/null; do sleep 0.3; done`,
     `rm -rf "${bundle}.new"`,
     `if ditto "${path.join(mnt, src)}" "${bundle}.new"; then`,
@@ -307,7 +309,8 @@ async function installUpdate(url) {
     `xattr -cr "${bundle}"`,
     // Запуск: через LaunchServices, а если не вышло — напрямую.
     `for i in 1 2 3; do open "${bundle}" && break; sleep 2; done`,
-    'sleep 4',
+    // Ждём до 15 секунд, пока приложение появится; только потом запускаем напрямую.
+    `for i in $(seq 1 15); do pgrep -f "${exe}" >/dev/null && break; sleep 1; done`,
     `pgrep -f "${exe}" >/dev/null || (nohup "${exe}" >/dev/null 2>&1 &)`,
     `hdiutil detach "${mnt}" -force -quiet`,
     `rm -rf "${dir}"`,
