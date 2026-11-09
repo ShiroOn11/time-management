@@ -481,3 +481,49 @@ textarea.input { resize: vertical; min-height: 64px; }
 .tag.heat.pause { background: var(--soft); color: var(--muted); }
 .chip.heatchip { display: inline-flex; align-items: center; gap: 6px; }
 .chip.heatchip.on { background: var(--soft); color: var(--text); border-color: var(--text); }
+
+/* данные к печати */
+.pd-top { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; position: sticky; top: -22px; background: var(--panel); padding: 8px 0; z-index: 2; }
+.pd-group { margin-bottom: 14px; }
+.pd-gname { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+.pd-row { display: grid; grid-template-columns: 210px 1fr auto; gap: 10px; align-items: center; padding: 4px 0 4px 10px; border-left: 3px solid var(--q1); margin-bottom: 4px; }
+.pd-row.ok { border-left-color: var(--q2); }
+.pd-row.na { border-left-color: var(--line); opacity: .55; }
+.pd-label { font-size: 13px; }
+.pd-row.missing .pd-label { font-weight: 600; }
+.pd-val { padding: 5px 9px; }
+.pd-seg button { padding: 3px 9px; font-size: 12px; }
+.modal h3 .btn { font-weight: 500; }
+
+/* режим фокуса */
+#focus:empty { display: none; }
+.focus-wrap {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2); backdrop-filter: blur(24px) saturate(1.2);
+  animation: fade .2s;
+}
+.focus-box { width: min(620px, calc(100vw - 48px)); text-align: center; }
+.focus-label { color: var(--accent); font-weight: 700; letter-spacing: .02em; margin-bottom: 10px; }
+.focus-title { font-size: 30px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; margin-bottom: 26px; }
+.focus-ring {
+  --pct: 0; width: 220px; height: 220px; border-radius: 50%; margin: 0 auto 22px; display: grid; place-items: center;
+  background: conic-gradient(var(--accent) calc(var(--pct) * 1%), var(--soft) 0);
+}
+.focus-ring .focus-clock { width: 188px; height: 188px; border-radius: 50%; background: var(--bg); display: grid; place-items: center; }
+.focus-clock { font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.focus-wrap.break .focus-clock { margin: 18px 0; }
+.focus-wrap.ended .focus-ring { background: var(--frog); }
+.focus-park .input { text-align: center; padding: 10px 14px; font-size: 14px; }
+.focus-parked { margin-top: 8px; color: var(--muted); font-size: 12.5px; text-align: left; max-height: 90px; overflow: auto; }
+.focus-q { font-size: 16px; margin-bottom: 14px; }
+.focus-acts { display: flex; gap: 10px; justify-content: center; margin-top: 18px; flex-wrap: wrap; }
+.focus-acts .btn { padding: 8px 16px; }
+
+/* сделано сегодня */
+.done-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 10px; }
+.done-stats div { background: var(--soft); border-radius: 10px; padding: 8px 10px; }
+.done-stats b { display: block; font-size: 18px; letter-spacing: -.01em; }
+.done-stats span { font-size: 11px; color: var(--muted); }
+.done-list { display: flex; flex-direction: column; gap: 3px; font-size: 13px; max-height: 220px; overflow: auto; }
+.done-list div { color: var(--text); opacity: .85; }
