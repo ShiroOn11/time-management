@@ -16,7 +16,7 @@ const bridge = window.api || {
   installUpdate: async () => ({ ok: false }),
   version: async () => 'dev',
   updateTray: () => {},
-  openItem: async (v) => (/^https?:/.test(v) ? window.open(v) : 'not-found'),
+  openItem: async (v) => (/^(https?|tg):/.test(v) ? (window.open(v), 'ok') : 'not-found'),
   revealItem: async () => 'not-found',
   pathForFile: () => '',
   on: () => {},
@@ -1096,7 +1096,7 @@ function viewPrint() {
               <div class="meta">${!x.done && heat !== 'normal' ? `<span class="tag heat ${heat}">${L.HEAT[heat].name}</span>` : ''}${cardDueTag(x)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}${(() => {
                 const pr = L.printDataProgress((p || x).printData || {}, printFields());
                 return `<button class="tag pd-chip ${pr.done === pr.total ? 'full' : pr.done ? 'part' : ''}" data-act="cardTable" data-id="${x.id}" title="Данные к печати: что есть, чего нету">📋 ${pr.done}/${pr.total}</button>`;
-              })()}${(x.materials || []).length ? `<span class="tag" title="Материалы в наличии">📦 ${x.materials.length}</span>` : ''}</div>
+              })()}${(x.materials || []).length ? `<span class="tag" title="Материалы в наличии">📦 ${x.materials.length}</span>` : ''}${linksIn(x.note).length ? `<button class="tag link-chip" data-act="openLink" data-u="${esc(linksIn(x.note)[0])}" title="${esc(linksIn(x.note)[0])}">↗ ссылка</button>` : ''}</div>
               ${x.note ? `<div class="pnote">${esc(x.note)}</div>` : ''}
             </div>
           </div>`;
@@ -1139,7 +1139,8 @@ function editCard(id) {
       <div class="field"><label>Проект</label><select class="input" id="cProject"><option value="">—</option>${projects.map((p) => `<option value="${p.id}" ${c.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>Срочность</label><div class="chips">${Object.entries(L.HEAT).map(([h, v]) => `<button class="chip heatchip ${h} ${L.heatOf(c) === h ? 'on' : ''}" data-act="cardHeatChip" data-h="${h}"><i class="hdot ${h} on"></i>${v.name}</button>`).join('')}</div><input type="hidden" id="cHeat" value="${L.heatOf(c)}"></div>
-    <div class="field"><label>Подробности</label><textarea class="input" id="cNote" placeholder="Тираж, материал, контакты типографии…">${esc(c.note)}</textarea></div>
+    <div class="field"><label>Подробности</label><textarea class="input" id="cNote" placeholder="Тираж, материал, контакты типографии… Ссылки из Telegram тоже можно вставлять">${esc(c.note)}</textarea>
+      <div class="note-links" id="cNoteLinks">${linkChips(c.note)}</div></div>
     <div class="field"><label>📦 Материалы в наличии — что уже есть и где лежит</label>
       <div class="mat-box" data-matdrop="${c.id}">
         <div id="matList">${materialsList(c)}</div>
@@ -1153,9 +1154,18 @@ function editCard(id) {
       <button class="btn primary" data-act="saveCard">Сохранить</button>
     </div>`, true);
 }
+// ---------- ссылки в тексте ----------
+// Ссылки из Telegram (t.me, tg://), Drive и любые http — найти в тексте, чтобы открыть одним нажатием.
+function linksIn(text) {
+  return [...new Set(String(text || '').match(/(https?:\/\/|tg:\/\/)[^\s<>"«»]+/gi) || [])].map((u) => u.replace(/[.,;:!?)\]]+$/, ''));
+}
+function linkChips(text) {
+  return linksIn(text).map((u) => `<button class="link-chip" data-act="openLink" data-u="${esc(u)}" title="${esc(u)}">↗ ${esc(u.replace(/^(https?|tg):\/\//i, '').replace(/^www\./, '').slice(0, 42))}${u.length > 50 ? '…' : ''}</button>`).join('');
+}
+
 // ---------- материалы в наличии ----------
 function materialKind(v) {
-  if (/^https?:\/\//i.test(v)) return 'link';
+  if (/^(https?|tg):\/\//i.test(v)) return 'link';
   if (/^(\/|~\/)/.test(v)) return 'file';
   return 'text';
 }
@@ -1841,7 +1851,7 @@ function printTable(key) {
           const input = PD_LONG.includes(label)
             ? `<textarea class="pd-in" rows="1" data-pd="${esc(label)}" placeholder="${ph}" ${st === 'na' ? 'disabled' : ''}>${esc(f.v || '')}</textarea>`
             : `<input class="pd-in" data-pd="${esc(label)}" value="${esc(f.v || '')}" placeholder="${ph}" ${st === 'na' ? 'disabled' : ''}>`;
-          return `<tr class="pd-tr ${st}"><td class="pd-l">${esc(label)}</td><td class="pd-v">${input}</td>
+          return `<tr class="pd-tr ${st}"><td class="pd-l">${esc(label)}</td><td class="pd-v">${input}<div class="pd-links">${linkChips(f.v)}</div></td>
             <td class="pd-x"><button class="pd-na" data-act="pdState" data-l="${esc(label)}" data-s="na" title="${st === 'na' ? 'Вернуть пункт' : 'Для этого проекта не нужно'}">${st === 'na' ? 'вернуть' : 'не нужно'}</button></td></tr>`;
         }).join('')}`).join('')}
     </table>
@@ -1865,6 +1875,8 @@ function refreshPrintCount() {
     const inp = tr.querySelector('[data-pd]');
     if (!inp) return;
     const st = L.printFieldState(d.printData, inp.dataset.pd);
+    const lk = tr.querySelector('.pd-links');
+    if (lk && document.activeElement === inp) lk.innerHTML = linkChips(inp.value);
     tr.classList.toggle('ok', st === 'ok');
     tr.classList.toggle('missing', st === 'missing');
   });
@@ -2129,6 +2141,9 @@ const ACTIONS = {
       if (w) w.scrollIntoView({ block: 'start' });
     }, 30);
   },
+  openLink: (el) => {
+    bridge.openItem(el.dataset.u).then((r) => r === 'not-found' && toast('Не удалось открыть ссылку'));
+  },
   matOpen: (el) => {
     const m = (cardById(el.dataset.c).materials || []).find((x) => x.id === el.dataset.m);
     if (m) bridge.openItem(m.value).then((r) => r === 'not-found' && toast('Файл не найден — возможно, его перенесли'));
@@ -2337,6 +2352,7 @@ document.addEventListener('click', (e) => {
   fn(el, e);
 });
 document.addEventListener('input', (e) => {
+  if (e.target.id === 'cNote') document.getElementById('cNoteLinks').innerHTML = linkChips(e.target.value);
   if (e.target.closest('[data-pd]')) refreshPrintCount();
 });
 document.addEventListener('change', (e) => {

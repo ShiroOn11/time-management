@@ -334,7 +334,7 @@ ipcMain.handle('update:install', async (_e, url) => {
 ipcMain.handle('app:version', () => app.getVersion());
 // Открыть материал: ссылку — в браузере, файл или папку — в своей программе / в Finder.
 ipcMain.handle('item:open', (_e, value) => {
-  if (/^https?:\/\//i.test(value)) return shell.openExternal(value);
+  if (/^(https?|tg):\/\//i.test(value)) return shell.openExternal(value);
   if (fs.existsSync(value)) return shell.openPath(value);
   return 'not-found';
 });
