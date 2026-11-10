@@ -549,3 +549,14 @@ textarea.input { resize: vertical; min-height: 64px; }
 .wn-list { display: flex; flex-direction: column; gap: 10px; }
 .wn-item { display: flex; gap: 14px; align-items: center; padding: 12px; border-radius: 12px; background: var(--soft); }
 .wn-ico { font-size: 24px; width: 34px; text-align: center; }
+
+/* материалы в наличии */
+.mat-box { border: 1.5px dashed var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.mat-box.drop { border-color: var(--accent); background: var(--accent-soft); }
+.mat-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
+.mat-row:last-child { border-bottom: 0; }
+.mat-ico { width: 20px; text-align: center; }
+.mat-main { flex: 1; min-width: 0; overflow: hidden; }
+.mat-main a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.mat-main a:hover { text-decoration: underline; }
+.mat-main .mini { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -16,6 +16,9 @@ const bridge = window.api || {
   installUpdate: async () => ({ ok: false }),
   version: async () => 'dev',
   updateTray: () => {},
+  openItem: async (v) => (/^https?:/.test(v) ? window.open(v) : 'not-found'),
+  revealItem: async () => 'not-found',
+  pathForFile: () => '',
   on: () => {},
 };
 
@@ -448,10 +451,11 @@ function focusPicker() {
 
 // «Что нового» — один раз после обновления, с кнопками «Показать».
 const WHATS_NEW = {
-  id: '2026-11-focus-print',
+  id: '2026-11-focus-print-materials',
   items: [
     ['🎯', 'Фокус', 'Кнопка «🎯 Фокус» слева: выбираете одно дело, 25 минут только на него. Пришло сообщение или мысль — запишите в строку внизу и продолжайте.', 'focusPicker', 'Попробовать'],
-    ['📋', 'Данные к печати', 'На каждой карточке «Печати» — «📋 0/25»: состав, штрих-код, ГОСТ, контакты… Кнопка «Скопировать запрос клиенту» соберёт сообщение со всем, чего не хватает.', 'goPrint', 'Показать'],
+    ['📋', 'Данные к печати', 'На каждой карточке «Печати» — «📋 0/25» (и кнопка в окне карточки): состав, штрих-код, ГОСТ, контакты… «Скопировать запрос клиенту» соберёт сообщение со всем, чего не хватает.', 'goPrint', 'Показать'],
+    ['📦', 'Материалы в наличии', 'В окне карточки «Печати» — список того, что уже есть: текстом, ссылкой или перетащите файл из Finder. Потом один клик — и файл открыт, искать не надо.', 'goPrint', 'Показать'],
     ['✓', 'Сделано сегодня', 'Внизу экрана «Сегодня» — всё, что вы закрыли за день: план, внезапное, печать, фокус. Видно, что день не пустой.', 'goTodayDone', 'Показать'],
     ['⏰', 'Окна для сообщений', 'В 10:00, 13:00, 16:00 и 18:00 придёт напоминание ответить в Telegram пачкой. Время меняется в Настройках.', 'goSettings', 'Настроить'],
     ['⬆︎', 'Обновления сами', 'Новые версии ставятся сами при запуске приложения — больше ничего скачивать не нужно.', '', ''],
@@ -1092,7 +1096,7 @@ function viewPrint() {
               <div class="meta">${!x.done && heat !== 'normal' ? `<span class="tag heat ${heat}">${L.HEAT[heat].name}</span>` : ''}${cardDueTag(x)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}${(() => {
                 const pr = L.printDataProgress((p || x).printData || {}, printFields());
                 return `<button class="tag pd-chip ${pr.done === pr.total ? 'full' : pr.done ? 'part' : ''}" data-act="printData" data-id="c:${x.id}" title="Данные к печати: что получено от клиента">📋 ${pr.done}/${pr.total}</button>`;
-              })()}</div>
+              })()}${(x.materials || []).length ? `<span class="tag" title="Материалы в наличии">📦 ${x.materials.length}</span>` : ''}</div>
               ${x.note ? `<div class="pnote">${esc(x.note)}</div>` : ''}
             </div>
           </div>`;
@@ -1126,7 +1130,7 @@ function editCard(id) {
   const c = cardById(id);
   const projects = S.projects.filter((p) => !p.closed || p.id === c.projectId);
   openModal(`
-    <h3>Дело · печать</h3>
+    <h3>Дело · печать <button class="btn sm" data-act="cardPrintData" data-id="${c.id}" style="float:right">📋 Данные к печати · ${(() => { const pr = L.printDataProgress(((c.projectId && projectById(c.projectId)) || c).printData || {}, printFields()); return pr.done + '/' + pr.total; })()}</button></h3>
     <input type="hidden" id="cId" value="${c.id}">
     <div class="field"><input class="input qa-title" id="cTitle" value="${esc(c.title)}" autofocus></div>
     <div class="row">
@@ -1136,12 +1140,62 @@ function editCard(id) {
     </div>
     <div class="field"><label>Срочность</label><div class="chips">${Object.entries(L.HEAT).map(([h, v]) => `<button class="chip heatchip ${h} ${L.heatOf(c) === h ? 'on' : ''}" data-act="cardHeatChip" data-h="${h}"><i class="hdot ${h} on"></i>${v.name}</button>`).join('')}</div><input type="hidden" id="cHeat" value="${L.heatOf(c)}"></div>
     <div class="field"><label>Подробности</label><textarea class="input" id="cNote" placeholder="Тираж, материал, контакты типографии…">${esc(c.note)}</textarea></div>
+    <div class="field"><label>📦 Материалы в наличии — что уже есть и где лежит</label>
+      <div class="mat-box" data-matdrop="${c.id}">
+        <div id="matList">${materialsList(c)}</div>
+        <form class="mat-add" data-matadd="${c.id}"><input class="input" name="v" placeholder="Например: «Логотип — в почте от 5 нояб», ссылка на Drive или перетащите файл сюда ⏎" autocomplete="off"></form>
+        <div class="mini">Перетащите файлы или папки из Finder прямо в эту рамку — по клику они откроются.</div>
+      </div></div>
     <div class="foot">
       <button class="btn danger left" data-act="deleteCard" data-id="${c.id}">Удалить</button>
       <button class="btn" data-act="closeModal">Отмена</button>
       <button class="btn primary" data-act="saveCard">Сохранить</button>
     </div>`);
 }
+// ---------- материалы в наличии ----------
+function materialKind(v) {
+  if (/^https?:\/\//i.test(v)) return 'link';
+  if (/^(\/|~\/)/.test(v)) return 'file';
+  return 'text';
+}
+function materialsList(c) {
+  const items = c.materials || [];
+  if (!items.length) return '<div class="empty" style="padding:2px 0 6px">Пока ничего. Запишите, что уже прислали или что есть у вас.</div>';
+  const ico = { link: '🔗', file: '📄', text: '📝' };
+  return items.map((m) => {
+    const label = m.kind === 'file' ? m.value.split('/').filter(Boolean).pop() : m.value;
+    const sub = m.kind === 'file' ? m.value : m.kind === 'link' ? m.value.replace(/^https?:\/\//, '').slice(0, 60) : '';
+    return `<div class="mat-row">
+      <span class="mat-ico">${ico[m.kind]}</span>
+      <div class="mat-main">${m.kind === 'text' ? `<div>${esc(label)}</div>` : `<a href="#" data-act="matOpen" data-c="${c.id}" data-m="${m.id}">${esc(label)}</a><div class="mini">${esc(sub)}</div>`}</div>
+      ${m.kind === 'file' ? `<button class="icon-btn" data-act="matReveal" data-c="${c.id}" data-m="${m.id}" title="Показать в Finder">📂</button>` : ''}
+      <button class="icon-btn" data-act="matDel" data-c="${c.id}" data-m="${m.id}" title="Убрать">✕</button>
+    </div>`;
+  }).join('');
+}
+function addMaterial(cardId, value) {
+  const c = cardById(cardId);
+  value = String(value || '').trim();
+  if (!c || !value) return;
+  c.materials = c.materials || [];
+  if (c.materials.some((m) => m.value === value)) return;
+  c.materials.push({ id: uid(), kind: materialKind(value), value, addedAt: nowMs() });
+  save();
+  const list = document.getElementById('matList');
+  if (list) list.innerHTML = materialsList(c);
+}
+// Применить поля открытой карточки, не закрывая окно (перед переходом к чек-листу).
+function applyCardForm() {
+  const idEl = document.getElementById('cId');
+  if (!idEl) return;
+  const c = cardById(idEl.value);
+  const title = document.getElementById('cTitle').value.trim();
+  const col = document.getElementById('cCol').value;
+  if (col !== c.col) L.moveCard(S.board.cards, c.id, col, null);
+  Object.assign(c, { title: title || c.title, heat: document.getElementById('cHeat').value, due: document.getElementById('cDue').value, projectId: document.getElementById('cProject').value, note: document.getElementById('cNote').value });
+  save();
+}
+
 function saveCard() {
   const c = cardById(document.getElementById('cId').value);
   const title = document.getElementById('cTitle').value.trim();
@@ -2046,6 +2100,24 @@ const ACTIONS = {
     commit();
   },
   editCard: (el) => editCard(el.dataset.id),
+  cardPrintData: (el) => {
+    applyCardForm();
+    printDataModal('c:' + el.dataset.id);
+  },
+  matOpen: (el) => {
+    const m = (cardById(el.dataset.c).materials || []).find((x) => x.id === el.dataset.m);
+    if (m) bridge.openItem(m.value).then((r) => r === 'not-found' && toast('Файл не найден — возможно, его перенесли'));
+  },
+  matReveal: (el) => {
+    const m = (cardById(el.dataset.c).materials || []).find((x) => x.id === el.dataset.m);
+    if (m) bridge.revealItem(m.value).then((r) => r === 'not-found' && toast('Файл не найден — возможно, его перенесли'));
+  },
+  matDel: (el) => {
+    const c = cardById(el.dataset.c);
+    c.materials = (c.materials || []).filter((x) => x.id !== el.dataset.m);
+    save();
+    document.getElementById('matList').innerHTML = materialsList(c);
+  },
   focus: (el) => startFocus(el.dataset.id),
   focusPicker: () => focusPicker(),
   focusPick: (el) => {
@@ -2245,6 +2317,13 @@ document.addEventListener('change', (e) => {
   if (el && CHANGES[el.dataset.change]) CHANGES[el.dataset.change](el, e);
 });
 document.addEventListener('submit', (e) => {
+  const madd = e.target.closest('[data-matadd]');
+  if (madd) {
+    e.preventDefault();
+    addMaterial(madd.dataset.matadd, madd.elements.v.value);
+    madd.elements.v.value = '';
+    return;
+  }
   const fnew = e.target.closest('[data-focusnew]');
   if (fnew) {
     e.preventDefault();
@@ -2292,6 +2371,27 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && document.getElementById('colName')) return saveColumn();
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && document.getElementById('cTitle')) return saveCard();
   if (e.key === 'Enter' && e.target.id === 'cTitle') return saveCard();
+});
+
+// файлы из Finder: в рамку «Материалы в наличии»; в остальных местах окно не должно открывать файл
+document.addEventListener('dragover', (e) => {
+  if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+  e.preventDefault();
+  const box = e.target.closest('[data-matdrop]');
+  document.querySelectorAll('.mat-box.drop').forEach((b) => b !== box && b.classList.remove('drop'));
+  if (box) box.classList.add('drop');
+});
+document.addEventListener('drop', (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  const box = e.target.closest('[data-matdrop]');
+  document.querySelectorAll('.mat-box.drop').forEach((b) => b.classList.remove('drop'));
+  if (!box) return;
+  [...e.dataTransfer.files].forEach((f) => {
+    const p = bridge.pathForFile(f);
+    if (p) addMaterial(box.dataset.matdrop, p);
+    else addMaterial(box.dataset.matdrop, f.name);
+  });
 });
 
 // перетаскивание на доске «Печать»
