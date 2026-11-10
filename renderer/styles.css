@@ -560,3 +560,25 @@ textarea.input { resize: vertical; min-height: 64px; }
 .mat-main a { color: var(--accent); text-decoration: none; font-weight: 500; }
 .mat-main a:hover { text-decoration: underline; }
 .mat-main .mini { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* таблица данных к печати */
+.pd-wrap { margin-top: 6px; }
+.pd-wrap .pd-top { display: flex; align-items: center; gap: 10px; position: static; padding: 0 0 8px; margin: 0; background: none; }
+.pd-title { font-weight: 700; }
+.pd-wrap .spacer { flex: 1; }
+.pd-table { width: 100%; border-collapse: collapse; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13px; }
+.pd-group-row td { background: var(--soft); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; padding: 6px 10px; }
+.pd-tr td { border-top: 1px solid var(--line); padding: 0; vertical-align: middle; }
+.pd-l { width: 36%; padding: 7px 10px !important; border-right: 1px solid var(--line); }
+.pd-tr.missing .pd-l { color: var(--danger); font-weight: 600; }
+.pd-tr.missing { background: color-mix(in srgb, var(--danger) 5%, transparent); }
+.pd-tr.na { opacity: .5; }
+.pd-tr.na .pd-l { text-decoration: line-through; }
+.pd-in { width: 100%; border: 0; background: transparent; padding: 7px 10px; outline: none; font: inherit; color: var(--text); resize: vertical; display: block; }
+.pd-in::placeholder { color: var(--danger); opacity: .75; font-style: italic; }
+.pd-tr.na .pd-in::placeholder, .pd-tr.ok .pd-in::placeholder { color: var(--muted); }
+.pd-in:focus { background: var(--accent-soft); }
+.pd-x { width: 82px; text-align: right; padding-right: 6px !important; }
+.pd-na { border: 0; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; padding: 3px 6px; border-radius: 6px; opacity: 0; }
+.pd-tr:hover .pd-na, .pd-tr.na .pd-na { opacity: 1; }
+.pd-na:hover { background: var(--soft); color: var(--text); }
