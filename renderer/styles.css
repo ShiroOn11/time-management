@@ -582,3 +582,11 @@ textarea.input { resize: vertical; min-height: 64px; }
 .pd-na { border: 0; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; padding: 3px 6px; border-radius: 6px; opacity: 0; }
 .pd-tr:hover .pd-na, .pd-tr.na .pd-na { opacity: 1; }
 .pd-na:hover { background: var(--soft); color: var(--text); }
+
+/* ссылки */
+.pd-links:empty, .note-links:empty { display: none; }
+.pd-links { padding: 0 10px 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.note-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.link-chip { border: 0; background: var(--accent-soft); color: var(--accent); border-radius: 12px; padding: 2px 9px; font: inherit; font-size: 12px; cursor: pointer; font-weight: 600; }
+.link-chip:hover { background: var(--accent); color: #fff; }
+.tag.link-chip { font-size: 11px; padding: 1px 7px; }
