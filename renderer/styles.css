@@ -531,3 +531,32 @@ textarea.input { resize: vertical; min-height: 64px; }
 .banner.upd-banner { background: var(--accent); color: #fff; }
 .banner.upd-banner .hint { color: rgba(255, 255, 255, .8); }
 .banner.upd-banner .btn.primary { background: #fff; color: var(--accent); border-color: #fff; }
+
+.tag.pd-chip { border: 0; cursor: pointer; font: inherit; font-size: 11px; background: var(--soft); color: var(--muted); }
+.tag.pd-chip:hover { background: var(--accent-soft); color: var(--accent); }
+.tag.pd-chip.part { background: var(--warn-soft); color: var(--warn); }
+.tag.pd-chip.full { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+.focus-btn {
+  display: block; width: 100%; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+  border-radius: 10px; padding: 9px 12px; margin: -6px 0 14px; font-weight: 700; cursor: pointer; text-align: left;
+}
+.focus-btn:hover { background: var(--accent); color: #fff; }
+.pick-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.pick-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; border: 1px solid var(--line); background: var(--panel);
+  border-radius: 9px; padding: 9px 12px; cursor: pointer; text-align: left; }
+.pick-row:hover { border-color: var(--accent); background: var(--accent-soft); }
+.wn-list { display: flex; flex-direction: column; gap: 10px; }
+.wn-item { display: flex; gap: 14px; align-items: center; padding: 12px; border-radius: 12px; background: var(--soft); }
+.wn-ico { font-size: 24px; width: 34px; text-align: center; }
+
+/* материалы в наличии */
+.mat-box { border: 1.5px dashed var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.mat-box.drop { border-color: var(--accent); background: var(--accent-soft); }
+.mat-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
+.mat-row:last-child { border-bottom: 0; }
+.mat-ico { width: 20px; text-align: center; }
+.mat-main { flex: 1; min-width: 0; overflow: hidden; }
+.mat-main a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.mat-main a:hover { text-decoration: underline; }
+.mat-main .mini { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
