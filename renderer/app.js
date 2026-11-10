@@ -454,7 +454,7 @@ const WHATS_NEW = {
   id: '2026-11-focus-print-materials',
   items: [
     ['🎯', 'Фокус', 'Кнопка «🎯 Фокус» слева: выбираете одно дело, 25 минут только на него. Пришло сообщение или мысль — запишите в строку внизу и продолжайте.', 'focusPicker', 'Попробовать'],
-    ['📋', 'Данные к печати', 'На каждой карточке «Печати» — «📋 0/25» (и кнопка в окне карточки): состав, штрих-код, ГОСТ, контакты… «Скопировать запрос клиенту» соберёт сообщение со всем, чего не хватает.', 'goPrint', 'Показать'],
+    ['📋', 'Данные к печати', 'В окне каждой карточки «Печати» — таблица «пункт | что есть»: состав, штрих-код, ГОСТ, контакты… Пусто — значит «нету». «Запрос клиенту» соберёт сообщение со всем, чего нету.', 'goPrint', 'Показать'],
     ['📦', 'Материалы в наличии', 'В окне карточки «Печати» — список того, что уже есть: текстом, ссылкой или перетащите файл из Finder. Потом один клик — и файл открыт, искать не надо.', 'goPrint', 'Показать'],
     ['✓', 'Сделано сегодня', 'Внизу экрана «Сегодня» — всё, что вы закрыли за день: план, внезапное, печать, фокус. Видно, что день не пустой.', 'goTodayDone', 'Показать'],
     ['⏰', 'Окна для сообщений', 'В 10:00, 13:00, 16:00 и 18:00 придёт напоминание ответить в Telegram пачкой. Время меняется в Настройках.', 'goSettings', 'Настроить'],
@@ -1095,7 +1095,7 @@ function viewPrint() {
               <div class="ptitle">${esc(x.title)}</div>
               <div class="meta">${!x.done && heat !== 'normal' ? `<span class="tag heat ${heat}">${L.HEAT[heat].name}</span>` : ''}${cardDueTag(x)}${p ? `<span class="tag project">${esc(p.name)}</span>` : ''}${(() => {
                 const pr = L.printDataProgress((p || x).printData || {}, printFields());
-                return `<button class="tag pd-chip ${pr.done === pr.total ? 'full' : pr.done ? 'part' : ''}" data-act="printData" data-id="c:${x.id}" title="Данные к печати: что получено от клиента">📋 ${pr.done}/${pr.total}</button>`;
+                return `<button class="tag pd-chip ${pr.done === pr.total ? 'full' : pr.done ? 'part' : ''}" data-act="cardTable" data-id="${x.id}" title="Данные к печати: что есть, чего нету">📋 ${pr.done}/${pr.total}</button>`;
               })()}${(x.materials || []).length ? `<span class="tag" title="Материалы в наличии">📦 ${x.materials.length}</span>` : ''}</div>
               ${x.note ? `<div class="pnote">${esc(x.note)}</div>` : ''}
             </div>
@@ -1130,7 +1130,7 @@ function editCard(id) {
   const c = cardById(id);
   const projects = S.projects.filter((p) => !p.closed || p.id === c.projectId);
   openModal(`
-    <h3>Дело · печать <button class="btn sm" data-act="cardPrintData" data-id="${c.id}" style="float:right">📋 Данные к печати · ${(() => { const pr = L.printDataProgress(((c.projectId && projectById(c.projectId)) || c).printData || {}, printFields()); return pr.done + '/' + pr.total; })()}</button></h3>
+    <h3>Дело · печать</h3>
     <input type="hidden" id="cId" value="${c.id}">
     <div class="field"><input class="input qa-title" id="cTitle" value="${esc(c.title)}" autofocus></div>
     <div class="row">
@@ -1146,11 +1146,12 @@ function editCard(id) {
         <form class="mat-add" data-matadd="${c.id}"><input class="input" name="v" placeholder="Например: «Логотип — в почте от 5 нояб», ссылка на Drive или перетащите файл сюда ⏎" autocomplete="off"></form>
         <div class="mini">Перетащите файлы или папки из Finder прямо в эту рамку — по клику они откроются.</div>
       </div></div>
+    ${printTable('c:' + c.id)}
     <div class="foot">
       <button class="btn danger left" data-act="deleteCard" data-id="${c.id}">Удалить</button>
       <button class="btn" data-act="closeModal">Отмена</button>
       <button class="btn primary" data-act="saveCard">Сохранить</button>
-    </div>`);
+    </div>`, true);
 }
 // ---------- материалы в наличии ----------
 function materialKind(v) {
@@ -1735,7 +1736,7 @@ function editProject(id) {
   const f = id ? L.forecast(p, st) : null;
   const tasks = id ? S.tasks.filter((x) => x.projectId === id).sort(byOrder) : [];
   openModal(`
-    <h3>${id ? esc(p.name) : 'Новый проект'}${id ? ` <button class="btn sm" data-act="printData" data-id="${id}" style="float:right">📋 Данные к печати · ${printProgress(p).done}/${printProgress(p).total}</button>` : ''}</h3>
+    <h3>${id ? esc(p.name) : 'Новый проект'}</h3>
     <input type="hidden" id="pId" value="${id || ''}">
     <div class="row">
       <div class="field"><label>Название</label><input class="input" id="pName" value="${esc(p.name)}" autofocus></div>
@@ -1758,6 +1759,7 @@ function editProject(id) {
           <td>${late ? '<span class="tag late">должен был начаться</span>' : ''}</td></tr>`;
       }).join('')}</table>
       ${f && f.end ? `<div class="hint" style="margin-top:6px">Прогноз окончания «Печати» при текущем темпе: <b>${fmtDate(f.end, true)}</b> · ${forecastTag(f)}</div>` : ''}</div>` : ''}
+    ${id ? printTable(id) : ''}
     ${id ? `<div class="field"><label>Задачи проекта
         <button class="btn ghost sm" data-act="newTask" data-project="${id}">＋ задача</button>
         <button class="btn ghost sm" data-act="stageTasks" data-id="${id}">＋ по шаблону этапа</button></label>
@@ -1815,37 +1817,57 @@ function pdTarget(key) {
   return p ? { obj: p, name: p.name, key } : null;
 }
 
-function printDataModal(id) {
-  const tg = pdTarget(id);
-  const p = { ...tg.obj, name: tg.name };
-  const data = p.printData || {};
-  const pr = printProgress(p);
-  const LONG = ['Состав', 'Пищевая ценность (на 100 г)', 'Информация о производителе', 'Доп. информация', 'Условия хранения'];
-  openModal(`
-    <h3>📋 Данные к печати · ${esc(p.name)}</h3>
+// Таблица «Пункт | Что есть» — прямо в окне карточки или проекта.
+const PD_LONG = ['Состав', 'Пищевая ценность (на 100 г)', 'Информация о производителе', 'Доп. информация', 'Условия хранения'];
+function printTable(key) {
+  const tg = pdTarget(key);
+  const data = tg.obj.printData || {};
+  const pr = L.printDataProgress(data, printFields());
+  return `<div id="pdWrap" class="pd-wrap">
     <input type="hidden" id="pdId" value="${esc(tg.key)}">
     <div class="pd-top">
-      <div style="flex:1"><div class="bar"><span class="${pr.done === pr.total ? '' : 'personal'}" style="width:${pr.total ? (pr.done / pr.total) * 100 : 100}%"></span></div>
-        <div class="mini" style="margin-top:4px">Получено <b>${pr.done}</b> из ${pr.total}${pr.missing.length ? ' · не хватает: ' + pr.missing.length : ' · всё собрано ✓'}</div></div>
-      <button class="btn" data-act="copyClientRequest" ${pr.missing.length ? '' : 'disabled'}>✉︎ Скопировать запрос клиенту</button>
-      <button class="btn" data-act="copyDesigner">Скопировать для дизайнера</button>
+      <div class="pd-title">📋 Данные к печати</div>
+      <div class="mini" id="pdCount">заполнено <b>${pr.done}</b> из ${pr.total}${pr.missing.length ? ' · нету: ' + pr.missing.length : ' · всё есть ✓'}</div>
+      <div class="spacer"></div>
+      <button class="btn sm" data-act="copyClientRequest">✉︎ Запрос клиенту</button>
+      <button class="btn sm" data-act="copyDesigner">Для дизайнера</button>
     </div>
-    ${printFields().map((g) => `<div class="pd-group"><div class="pd-gname">${esc(g.group)}</div>
-      ${g.items.map((label) => {
-        const f = data[label] || {};
-        const st = L.printFieldState(data, label);
-        const input = LONG.includes(label)
-          ? `<textarea class="input pd-val" rows="2" data-pd="${esc(label)}" placeholder="—">${esc(f.v || '')}</textarea>`
-          : `<input class="input pd-val" data-pd="${esc(label)}" value="${esc(f.v || '')}" placeholder="—">`;
-        return `<div class="pd-row ${st}">
-          <div class="pd-label">${esc(label)}</div>${input}
-          <div class="seg pd-seg">
-            <button class="${st === 'ok' ? 'on' : ''}" data-act="pdState" data-l="${esc(label)}" data-s="ok" title="Получено">✓</button>
-            <button class="${st === 'na' ? 'on' : ''}" data-act="pdState" data-l="${esc(label)}" data-s="na" title="Для этого проекта не нужно">не нужно</button>
-          </div></div>`;
-      }).join('')}</div>`).join('')}
-    <div class="foot"><span class="left hint">Значение можно вписать или просто отметить ✓, если получено файлом. Шаблон пунктов меняется в Настройках.</span>
+    <table class="pd-table">
+      ${printFields().map((g) => `<tr class="pd-group-row"><td colspan="3">${esc(g.group)}</td></tr>
+        ${g.items.map((label) => {
+          const f = data[label] || {};
+          const st = L.printFieldState(data, label);
+          const ph = st === 'na' ? 'не нужно' : f.s === 'ok' ? 'есть (отмечено)' : 'нету';
+          const input = PD_LONG.includes(label)
+            ? `<textarea class="pd-in" rows="1" data-pd="${esc(label)}" placeholder="${ph}" ${st === 'na' ? 'disabled' : ''}>${esc(f.v || '')}</textarea>`
+            : `<input class="pd-in" data-pd="${esc(label)}" value="${esc(f.v || '')}" placeholder="${ph}" ${st === 'na' ? 'disabled' : ''}>`;
+          return `<tr class="pd-tr ${st}"><td class="pd-l">${esc(label)}</td><td class="pd-v">${input}</td>
+            <td class="pd-x"><button class="pd-na" data-act="pdState" data-l="${esc(label)}" data-s="na" title="${st === 'na' ? 'Вернуть пункт' : 'Для этого проекта не нужно'}">${st === 'na' ? 'вернуть' : 'не нужно'}</button></td></tr>`;
+        }).join('')}`).join('')}
+    </table>
+  </div>`;
+}
+function printDataModal(id) {
+  const tg = pdTarget(id);
+  openModal(`<h3>${esc(tg.name)}</h3>${printTable(id)}
+    <div class="foot"><span class="left hint">Пишите, что есть, или оставьте пусто — тогда «нету». Шаблон пунктов — в Настройках.</span>
       <button class="btn primary" data-act="savePrintData">Готово</button></div>`, true);
+}
+// Обновить счётчик и подсветку строки на лету, пока вы печатаете.
+function refreshPrintCount() {
+  const idEl = document.getElementById('pdId');
+  if (!idEl) return;
+  const d = collectPrintData();
+  const pr = L.printDataProgress(d.printData, printFields());
+  const el = document.getElementById('pdCount');
+  if (el) el.innerHTML = `заполнено <b>${pr.done}</b> из ${pr.total}${pr.missing.length ? ' · нету: ' + pr.missing.length : ' · всё есть ✓'}`;
+  document.querySelectorAll('.pd-tr').forEach((tr) => {
+    const inp = tr.querySelector('[data-pd]');
+    if (!inp) return;
+    const st = L.printFieldState(d.printData, inp.dataset.pd);
+    tr.classList.toggle('ok', st === 'ok');
+    tr.classList.toggle('missing', st === 'missing');
+  });
 }
 // Собрать значения из формы в проект (вызывается перед любым действием в окне).
 function collectPrintData() {
@@ -2100,9 +2122,12 @@ const ACTIONS = {
     commit();
   },
   editCard: (el) => editCard(el.dataset.id),
-  cardPrintData: (el) => {
-    applyCardForm();
-    printDataModal('c:' + el.dataset.id);
+  cardTable: (el) => {
+    editCard(el.dataset.id);
+    setTimeout(() => {
+      const w = document.getElementById('pdWrap');
+      if (w) w.scrollIntoView({ block: 'start' });
+    }, 30);
   },
   matOpen: (el) => {
     const m = (cardById(el.dataset.c).materials || []).find((x) => x.id === el.dataset.m);
@@ -2166,9 +2191,8 @@ const ACTIONS = {
     const f = (p.printData[el.dataset.l] = p.printData[el.dataset.l] || {});
     f.s = f.s === el.dataset.s ? '' : el.dataset.s;
     save();
-    const scroll = document.querySelector('.modal').scrollTop;
-    printDataModal(p.key);
-    document.querySelector('.modal').scrollTop = scroll;
+    const wrap = document.getElementById('pdWrap');
+    if (wrap) wrap.outerHTML = printTable(document.getElementById('pdId').value);
   },
   savePrintData: () => {
     collectPrintData();
@@ -2311,6 +2335,9 @@ document.addEventListener('click', (e) => {
   if (el.tagName === 'A') e.preventDefault();
   e.stopPropagation();
   fn(el, e);
+});
+document.addEventListener('input', (e) => {
+  if (e.target.closest('[data-pd]')) refreshPrintCount();
 });
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-change]');
