@@ -315,7 +315,7 @@
   function printFieldState(data, label) {
     const f = (data && data[label]) || {};
     if (f.s === 'na') return 'na';
-    if (f.s === 'ok' || (f.v && String(f.v).trim())) return 'ok';
+    if (f.s === 'ok' || (f.v && String(f.v).trim()) || (f.photos && f.photos.length)) return 'ok';
     return 'missing';
   }
   function printDataProgress(data, fields) {
@@ -346,7 +346,11 @@
     const out = [(projectName || 'Проект') + ' — данные для макета', ''];
     fields.forEach((g) => {
       const rows = g.items.filter((label) => printFieldState(data, label) !== 'na')
-        .map((label) => label + ': ' + (((data && data[label]) || {}).v || '—'));
+        .map((label) => {
+          const f = (data && data[label]) || {};
+          const n = (f.photos || []).length;
+          return label + ': ' + (f.v || (n ? '' : '—')) + (n ? (f.v ? ' · ' : '') + 'фото: ' + n : '');
+        });
       if (rows.length) out.push(g.group.toUpperCase(), ...rows, '');
     });
     return out.join('\n').trim();

@@ -19,6 +19,12 @@ const bridge = window.api || {
   openItem: async (v) => (/^(https?|tg):/.test(v) ? (window.open(v), 'ok') : 'not-found'),
   revealItem: async () => 'not-found',
   pathForFile: () => '',
+  attachDir: async () => '',
+  attachCopy: async () => null,
+  attachSave: null,
+  attachPick: async () => [],
+  attachOpen: async () => {},
+  attachDelete: async () => {},
   on: () => {},
 };
 
@@ -451,10 +457,11 @@ function focusPicker() {
 
 // «Что нового» — один раз после обновления, с кнопками «Показать».
 const WHATS_NEW = {
-  id: '2026-11-focus-print-materials',
+  id: '2026-11-photos',
   items: [
     ['🎯', 'Фокус', 'Кнопка «🎯 Фокус» слева: выбираете одно дело, 25 минут только на него. Пришло сообщение или мысль — запишите в строку внизу и продолжайте.', 'focusPicker', 'Попробовать'],
     ['📋', 'Данные к печати', 'В окне каждой карточки «Печати» — таблица «пункт | что есть»: состав, штрих-код, ГОСТ, контакты… Пусто — значит «нету». «Запрос клиенту» соберёт сообщение со всем, чего нету.', 'goPrint', 'Показать'],
+    ['📷', 'Фото к данным печати', 'В строке таблицы «Данные к печати» скопируйте картинку в Telegram и нажмите ⌘V — фото прикрепится к этому пункту. Можно перетащить файл или нажать 📷.', 'goPrint', 'Показать'],
     ['📦', 'Материалы в наличии', 'В окне карточки «Печати» — список того, что уже есть: текстом, ссылкой или перетащите файл из Finder. Потом один клик — и файл открыт, искать не надо.', 'goPrint', 'Показать'],
     ['✓', 'Сделано сегодня', 'Внизу экрана «Сегодня» — всё, что вы закрыли за день: план, внезапное, печать, фокус. Видно, что день не пустой.', 'goTodayDone', 'Показать'],
     ['⏰', 'Окна для сообщений', 'В 10:00, 13:00, 16:00 и 18:00 придёт напоминание ответить в Telegram пачкой. Время меняется в Настройках.', 'goSettings', 'Настроить'],
@@ -1827,6 +1834,42 @@ function pdTarget(key) {
   return p ? { obj: p, name: p.name, key } : null;
 }
 
+// ---------- фото к данным печати ----------
+let ATTACH_DIR = '';
+function photoSrc(ph) {
+  return ph.dataUrl || ('file://' + encodeURI(ATTACH_DIR + '/' + ph.file));
+}
+const isImage = (ph) => /\.(jpe?g|png|gif|webp|heic|tiff?|bmp)$/i.test(ph.file || ph.name || '') || /^data:image/.test(ph.dataUrl || '');
+// Сохранить картинку из буфера обмена или перетаскивания (без пути на диске).
+async function attachFromBlob(blob, name) {
+  const ext = '.' + ((blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg'));
+  if (bridge.attachSave) return bridge.attachSave(new Uint8Array(await blob.arrayBuffer()), ext, name || 'фото' + ext);
+  const dataUrl = await new Promise((res) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.readAsDataURL(blob);
+  });
+  return { file: '', name: name || 'фото' + ext, dataUrl };
+}
+function addPhotos(label, list) {
+  const d = collectPrintData();
+  if (!d || !list.length) return;
+  const f = (d.printData[label] = d.printData[label] || {});
+  f.photos = (f.photos || []).concat(list.filter(Boolean).map((x) => ({ id: uid(), ...x, addedAt: nowMs() })));
+  if (f.s === 'na') f.s = '';
+  save();
+  const wrap = document.getElementById('pdWrap');
+  if (wrap) wrap.outerHTML = printTable(document.getElementById('pdId').value);
+  toast(list.length > 1 ? 'Добавлено фото: ' + list.length : 'Фото добавлено');
+}
+function photoThumbs(label, f) {
+  const photos = f.photos || [];
+  if (!photos.length) return '';
+  return `<div class="pd-photos">${photos.map((ph) => `<div class="pd-ph">
+    <button class="pd-ph-img" data-act="pdPhotoOpen" data-l="${esc(label)}" data-id="${ph.id}" title="${esc(ph.name || '')}">${isImage(ph) ? `<img src="${esc(photoSrc(ph))}" alt="">` : '<span>📄</span>'}</button>
+    <button class="pd-ph-del" data-act="pdPhotoDel" data-l="${esc(label)}" data-id="${ph.id}" title="Убрать">✕</button></div>`).join('')}</div>`;
+}
+
 // Таблица «Пункт | Что есть» — прямо в окне карточки или проекта.
 const PD_LONG = ['Состав', 'Пищевая ценность (на 100 г)', 'Информация о производителе', 'Доп. информация', 'Условия хранения'];
 function printTable(key) {
@@ -1837,6 +1880,7 @@ function printTable(key) {
     <input type="hidden" id="pdId" value="${esc(tg.key)}">
     <div class="pd-top">
       <div class="pd-title">📋 Данные к печати</div>
+      <div class="mini">фото: ⌘V в строке, перетащите или 📷</div>
       <div class="mini" id="pdCount">заполнено <b>${pr.done}</b> из ${pr.total}${pr.missing.length ? ' · нету: ' + pr.missing.length : ' · всё есть ✓'}</div>
       <div class="spacer"></div>
       <button class="btn sm" data-act="copyClientRequest">✉︎ Запрос клиенту</button>
@@ -1847,12 +1891,12 @@ function printTable(key) {
         ${g.items.map((label) => {
           const f = data[label] || {};
           const st = L.printFieldState(data, label);
-          const ph = st === 'na' ? 'не нужно' : f.s === 'ok' ? 'есть (отмечено)' : 'нету';
+          const ph = st === 'na' ? 'не нужно' : (f.photos || []).length ? 'есть фото · можно дописать текст' : f.s === 'ok' ? 'есть (отмечено)' : 'нету';
           const input = PD_LONG.includes(label)
             ? `<textarea class="pd-in" rows="1" data-pd="${esc(label)}" placeholder="${ph}" ${st === 'na' ? 'disabled' : ''}>${esc(f.v || '')}</textarea>`
             : `<input class="pd-in" data-pd="${esc(label)}" value="${esc(f.v || '')}" placeholder="${ph}" ${st === 'na' ? 'disabled' : ''}>`;
-          return `<tr class="pd-tr ${st}"><td class="pd-l">${esc(label)}</td><td class="pd-v">${input}<div class="pd-links">${linkChips(f.v)}</div></td>
-            <td class="pd-x"><button class="pd-na" data-act="pdState" data-l="${esc(label)}" data-s="na" title="${st === 'na' ? 'Вернуть пункт' : 'Для этого проекта не нужно'}">${st === 'na' ? 'вернуть' : 'не нужно'}</button></td></tr>`;
+          return `<tr class="pd-tr ${st}" data-pddrop="${esc(label)}"><td class="pd-l">${esc(label)}</td><td class="pd-v">${input}<div class="pd-links">${linkChips(f.v)}</div>${photoThumbs(label, f)}</td>
+            <td class="pd-x"><button class="pd-na pd-cam" data-act="pdPhotoPick" data-l="${esc(label)}" title="Добавить фото (или ⌘V / перетащите сюда)">📷</button><button class="pd-na" data-act="pdState" data-l="${esc(label)}" data-s="na" title="${st === 'na' ? 'Вернуть пункт' : 'Для этого проекта не нужно'}">${st === 'na' ? 'вернуть' : 'не нужно'}</button></td></tr>`;
         }).join('')}`).join('')}
     </table>
   </div>`;
@@ -2141,6 +2185,39 @@ const ACTIONS = {
       if (w) w.scrollIntoView({ block: 'start' });
     }, 30);
   },
+  pdPhotoPick: async (el) => {
+    const label = el.dataset.l;
+    let list = await bridge.attachPick();
+    if (!window.api) {
+      // просмотр в браузере: обычный выбор файла
+      list = await new Promise((res) => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        inp.multiple = true;
+        inp.onchange = async () => res(await Promise.all([...inp.files].map((f) => attachFromBlob(f, f.name))));
+        inp.click();
+      });
+    }
+    addPhotos(label, list);
+  },
+  pdPhotoOpen: (el) => {
+    const d = collectPrintData();
+    const ph = ((d.printData[el.dataset.l] || {}).photos || []).find((x) => x.id === el.dataset.id);
+    if (!ph) return;
+    if (ph.dataUrl) window.open(ph.dataUrl);
+    else bridge.attachOpen(ph.file);
+  },
+  pdPhotoDel: (el) => {
+    const d = collectPrintData();
+    const f = d.printData[el.dataset.l] || {};
+    const ph = (f.photos || []).find((x) => x.id === el.dataset.id);
+    f.photos = (f.photos || []).filter((x) => x.id !== el.dataset.id);
+    if (ph && ph.file) bridge.attachDelete(ph.file);
+    save();
+    const wrap = document.getElementById('pdWrap');
+    if (wrap) wrap.outerHTML = printTable(document.getElementById('pdId').value);
+  },
   openLink: (el) => {
     bridge.openItem(el.dataset.u).then((r) => r === 'not-found' && toast('Не удалось открыть ссылку'));
   },
@@ -2351,6 +2428,16 @@ document.addEventListener('click', (e) => {
   e.stopPropagation();
   fn(el, e);
 });
+// ⌘V картинки (например, из Telegram) в строке таблицы — прикрепить как фото к этому пункту.
+document.addEventListener('paste', (e) => {
+  const row = e.target.closest && e.target.closest('[data-pddrop]');
+  if (!row || !e.clipboardData) return;
+  const files = [...e.clipboardData.items].filter((it) => it.kind === 'file' && it.type.startsWith('image/')).map((it) => it.getAsFile()).filter(Boolean);
+  if (!files.length) return;
+  e.preventDefault();
+  Promise.all(files.map((f) => attachFromBlob(f, f.name && f.name !== 'image.png' ? f.name : 'вставка из буфера.png'))).then((list) => addPhotos(row.dataset.pddrop, list));
+});
+
 document.addEventListener('input', (e) => {
   if (e.target.id === 'cNote') document.getElementById('cNoteLinks').innerHTML = linkChips(e.target.value);
   if (e.target.closest('[data-pd]')) refreshPrintCount();
@@ -2420,6 +2507,12 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('dragover', (e) => {
   if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
   e.preventDefault();
+  const row = e.target.closest('[data-pddrop]');
+  document.querySelectorAll('.pd-tr.drop').forEach((r) => r !== row && r.classList.remove('drop'));
+  if (row) {
+    row.classList.add('drop');
+    return;
+  }
   const box = e.target.closest('[data-matdrop]');
   document.querySelectorAll('.mat-box.drop').forEach((b) => b !== box && b.classList.remove('drop'));
   if (box) box.classList.add('drop');
@@ -2427,6 +2520,15 @@ document.addEventListener('dragover', (e) => {
 document.addEventListener('drop', (e) => {
   if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
   e.preventDefault();
+  const row = e.target.closest('[data-pddrop]');
+  document.querySelectorAll('.pd-tr.drop').forEach((r) => r.classList.remove('drop'));
+  if (row) {
+    Promise.all([...e.dataTransfer.files].map((f) => {
+      const p = bridge.pathForFile(f);
+      return p ? bridge.attachCopy(p) : attachFromBlob(f, f.name);
+    })).then((list) => addPhotos(row.dataset.pddrop, list));
+    return;
+  }
   const box = e.target.closest('[data-matdrop]');
   document.querySelectorAll('.mat-box.drop').forEach((b) => b.classList.remove('drop'));
   if (!box) return;
@@ -2665,6 +2767,7 @@ async function init() {
     renderNav();
   });
   upd.version = await bridge.version();
+  ATTACH_DIR = await bridge.attachDir();
   if (!S.seenGuide) {
     S.seenGuide = true;
     S.seenWhatsNew = WHATS_NEW.id;

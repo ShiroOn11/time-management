@@ -13,6 +13,12 @@ contextBridge.exposeInMainWorld('api', {
   revealItem: (value) => ipcRenderer.invoke('item:reveal', value),
   // Путь к файлу, перетащенному из Finder.
   pathForFile: (file) => (webUtils && webUtils.getPathForFile ? webUtils.getPathForFile(file) : file.path || ''),
+  attachDir: () => ipcRenderer.invoke('attach:dir'),
+  attachCopy: (src) => ipcRenderer.invoke('attach:copy', src),
+  attachSave: (bytes, ext, name) => ipcRenderer.invoke('attach:save', bytes, ext, name),
+  attachPick: () => ipcRenderer.invoke('attach:pick'),
+  attachOpen: (file) => ipcRenderer.invoke('attach:open', file),
+  attachDelete: (file) => ipcRenderer.invoke('attach:delete', file),
   updateTray: (title, timerRunning) => ipcRenderer.send('tray:update', title, timerRunning),
   on: (channel, fn) => {
     if (['quick-add', 'timer-stop', 'menu', 'update:progress'].includes(channel)) {

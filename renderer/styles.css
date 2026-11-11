@@ -590,3 +590,14 @@ textarea.input { resize: vertical; min-height: 64px; }
 .link-chip { border: 0; background: var(--accent-soft); color: var(--accent); border-radius: 12px; padding: 2px 9px; font: inherit; font-size: 12px; cursor: pointer; font-weight: 600; }
 .link-chip:hover { background: var(--accent); color: #fff; }
 .tag.link-chip { font-size: 11px; padding: 1px 7px; }
+
+/* фото в таблице данных */
+.pd-tr.drop { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+.pd-photos { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
+.pd-ph { position: relative; }
+.pd-ph-img { width: 64px; height: 64px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); padding: 0; background: var(--soft); cursor: zoom-in; display: grid; place-items: center; font-size: 22px; }
+.pd-ph-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pd-ph-del { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: var(--text); color: var(--bg); font-size: 10px; cursor: pointer; opacity: 0; }
+.pd-ph:hover .pd-ph-del { opacity: 1; }
+.pd-x { width: 120px; }
+.pd-cam { font-size: 13px; }

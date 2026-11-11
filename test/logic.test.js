@@ -146,3 +146,10 @@ test('данные для печати: прогресс, запрос клие�
   assert.deepStrictEqual(L.printFieldsFromText(txt), F);
   assert.strictEqual(L.PRINT_FIELDS.reduce((n, g) => n + g.items.length, 0), 25);
 });
+
+test('данные для печати: фото считается заполненным пунктом', () => {
+  const F = [{ group: 'Маркировка', items: ['Штрих-код', 'QR-код'] }];
+  const data = { 'Штрих-код': { photos: [{ file: 'a.jpg' }] } };
+  assert.deepStrictEqual(L.printDataProgress(data, F), { total: 2, done: 1, missing: ['QR-код'] });
+  assert.ok(L.designerText('X', data, F).includes('Штрих-код: фото: 1'));
+});
