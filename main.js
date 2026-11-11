@@ -338,6 +338,39 @@ ipcMain.handle('item:open', (_e, value) => {
   if (fs.existsSync(value)) return shell.openPath(value);
   return 'not-found';
 });
+// ---------- вложения (фото к данным печати) ----------
+// Храним копии внутри папки данных, чтобы фото не пропали, если исходник удалят.
+const attachDir = () => {
+  const d = path.join(dataDir(), 'attachments');
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+};
+const attachName = (ext) => Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + (ext || '').toLowerCase().replace(/[^.a-z0-9]/g, '').slice(0, 8);
+const attachPath = (file) => path.join(attachDir(), path.basename(String(file)));
+function copyAttachment(src) {
+  const file = attachName(path.extname(src));
+  fs.copyFileSync(src, path.join(attachDir(), file));
+  return { file, name: path.basename(src) };
+}
+ipcMain.handle('attach:dir', () => attachDir());
+ipcMain.handle('attach:copy', (_e, src) => (fs.existsSync(src) && fs.statSync(src).isFile() ? copyAttachment(src) : null));
+ipcMain.handle('attach:save', (_e, bytes, ext, name) => {
+  const file = attachName(ext);
+  fs.writeFileSync(path.join(attachDir(), file), Buffer.from(bytes));
+  return { file, name: name || file };
+});
+ipcMain.handle('attach:pick', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Фото и PDF', extensions: ['jpg', 'jpeg', 'png', 'heic', 'webp', 'gif', 'tif', 'tiff', 'pdf'] }, { name: 'Все файлы', extensions: ['*'] }],
+  });
+  return canceled ? [] : filePaths.map(copyAttachment);
+});
+ipcMain.handle('attach:open', (_e, file) => shell.openPath(attachPath(file)));
+ipcMain.handle('attach:delete', (_e, file) => {
+  try { fs.unlinkSync(attachPath(file)); } catch (e) { /* уже удалён */ }
+});
+
 ipcMain.handle('item:reveal', (_e, value) => {
   if (fs.existsSync(value)) shell.showItemInFolder(value);
   else return 'not-found';
